@@ -1,6 +1,5 @@
 package me.jellysquid.mods.sodium.client.render.chunk;
 
-import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
 import me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderBounds;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
@@ -96,7 +95,7 @@ public class ChunkRenderContainer<T extends ChunkGraphicsState> {
             T state = states[i];
 
             if (state != null) {
-                state.delete(RenderDevice.INSTANCE.createCommandList());
+                state.delete();
                 states[i] = null;
             }
         }

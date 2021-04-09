@@ -2,98 +2,128 @@ package me.jellysquid.mods.sodium.client.gl.arena;
 
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import me.jellysquid.mods.sodium.client.gl.buffer.GlBuffer;
-import me.jellysquid.mods.sodium.client.gl.buffer.GlBufferTarget;
-import me.jellysquid.mods.sodium.client.gl.buffer.GlBufferUsage;
 import me.jellysquid.mods.sodium.client.gl.buffer.GlMutableBuffer;
-import me.jellysquid.mods.sodium.client.gl.device.CommandList;
-import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
+import me.jellysquid.mods.sodium.client.gl.util.MemoryTracker;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL31;
+import org.lwjgl.opengl.GL33;
 
 import java.util.Set;
 
 public class GlBufferArena {
-    private static final GlBufferUsage BUFFER_USAGE = GlBufferUsage.GL_DYNAMIC_DRAW;
-
-    private final RenderDevice device;
     private final int resizeIncrement;
 
-    private final Set<GlBufferSegment> freeRegions = new ObjectLinkedOpenHashSet<>();
+    private final MemoryTracker memoryTracker;
+    private final Set<GlBufferRegion> freeRegions = new ObjectLinkedOpenHashSet<>();
 
-    private GlMutableBuffer vertexBuffer;
+    private GlBuffer vertexBuffer;
+    private boolean isBufferBound;
 
     private int position;
     private int capacity;
     private int allocCount;
+    private int usedBytes;
 
-    public GlBufferArena(RenderDevice device, int initialSize, int resizeIncrement) {
-        this.device = device;
+    public GlBufferArena(MemoryTracker memoryTracker, int initialSize, int resizeIncrement) {
+        this.memoryTracker = memoryTracker;
 
-        try (CommandList commands = device.createCommandList()) {
-            this.vertexBuffer = commands.createMutableBuffer(BUFFER_USAGE);
-            commands.allocateBuffer(GlBufferTarget.COPY_WRITE_BUFFER, this.vertexBuffer, initialSize);
-        }
+        this.vertexBuffer = this.createBuffer();
+        this.vertexBuffer.bind(GL31.GL_COPY_WRITE_BUFFER);
+        this.vertexBuffer.allocate(GL31.GL_COPY_WRITE_BUFFER, initialSize);
+        this.vertexBuffer.unbind(GL31.GL_COPY_WRITE_BUFFER);
+
+        this.memoryTracker.onMemoryAllocate(this.vertexBuffer.getSize());
 
         this.resizeIncrement = resizeIncrement;
         this.capacity = initialSize;
     }
 
-    private void resize(CommandList commandList, int newCapacity) {
-        GlMutableBuffer src = this.vertexBuffer;
-        GlMutableBuffer dst = commandList.createMutableBuffer(BUFFER_USAGE);
+    private void resize(int size) {
+        this.memoryTracker.onMemoryRelease(this.vertexBuffer.getSize());
 
-        commandList.allocateBuffer(GlBufferTarget.COPY_WRITE_BUFFER, dst, newCapacity);
-        commandList.copyBufferSubData(src, dst, 0, 0, this.position);
-        commandList.deleteBuffer(src);
+        GlBuffer src = this.vertexBuffer;
+        src.unbind(GL31.GL_COPY_WRITE_BUFFER);
+
+        GlBuffer dst = this.createBuffer();
+
+        GlBuffer.copy(src, dst, 0, 0, this.capacity, size);
+        src.delete();
+
+        dst.bind(GL31.GL_COPY_WRITE_BUFFER);
 
         this.vertexBuffer = dst;
-        this.capacity = newCapacity;
+        this.capacity = size;
+
+        this.memoryTracker.onMemoryAllocate(this.vertexBuffer.getSize());
     }
 
-    public void prepareBuffer(CommandList commandList, int bytes) {
-        if (this.position + bytes >= this.capacity) {
-            this.resize(commandList, this.getNextSize(bytes));
+    private GlBuffer createBuffer() {
+        return new GlMutableBuffer(GL15.GL_DYNAMIC_DRAW);
+    }
+
+    public void bind() {
+        this.vertexBuffer.bind(GL31.GL_COPY_WRITE_BUFFER);
+        this.isBufferBound = true;
+    }
+
+    public void ensureCapacity(int len) {
+        if (this.position + len >= this.capacity) {
+            this.resize(this.getNextSize(len));
         }
     }
 
-    public GlBufferSegment uploadBuffer(CommandList commandList, GlBuffer readBuffer, int readOffset, int byteCount) {
-        this.prepareBuffer(commandList, byteCount);
+    public GlBufferRegion upload(int readTarget, int offset, int len) {
+        this.checkBufferBound();
+        this.ensureCapacity(len);
 
-        GlBufferSegment segment = this.alloc(byteCount);
-
-        commandList.copyBufferSubData(readBuffer, this.vertexBuffer, readOffset, segment.getStart(), byteCount);
+        GlBufferRegion segment = this.alloc(len);
+        GL33.glCopyBufferSubData(readTarget, GL31.GL_COPY_WRITE_BUFFER, offset, segment.getStart(), len);
 
         return segment;
+    }
+
+    public void unbind() {
+        this.checkBufferBound();
+
+        this.vertexBuffer.unbind(GL31.GL_COPY_WRITE_BUFFER);
+        this.isBufferBound = false;
     }
 
     private int getNextSize(int len) {
         return Math.max(this.capacity + this.resizeIncrement, this.capacity + len);
     }
 
-    public void free(GlBufferSegment segment) {
+    public void free(GlBufferRegion segment) {
         if (!this.freeRegions.add(segment)) {
             throw new IllegalArgumentException("Segment already freed");
         }
 
+        this.memoryTracker.onMemoryFree(segment.getLength());
         this.allocCount--;
+        this.usedBytes -= segment.getLength();
     }
 
-    private GlBufferSegment alloc(int len) {
-        GlBufferSegment segment = this.allocReuse(len);
+    private GlBufferRegion alloc(int len) {
+        GlBufferRegion segment = this.allocReuse(len);
 
         if (segment == null) {
-            segment = new GlBufferSegment(this, this.position, len);
+            segment = new GlBufferRegion(this, this.position, len);
 
             this.position += len;
         }
 
         this.allocCount++;
+        this.usedBytes += segment.getLength();
+
+        this.memoryTracker.onMemoryUse(segment.getLength());
 
         return segment;
     }
 
-    private GlBufferSegment allocReuse(int len) {
-        GlBufferSegment bestSegment = null;
+    private GlBufferRegion allocReuse(int len) {
+        GlBufferRegion bestSegment = null;
 
-        for (GlBufferSegment segment : this.freeRegions) {
+        for (GlBufferRegion segment : this.freeRegions) {
             if (segment.getLength() < len) {
                 continue;
             }
@@ -112,16 +142,17 @@ public class GlBufferArena {
         int excess = bestSegment.getLength() - len;
 
         if (excess > 0) {
-            this.freeRegions.add(new GlBufferSegment(this, bestSegment.getStart() + len, excess));
+            this.freeRegions.add(new GlBufferRegion(this, bestSegment.getStart() + len, excess));
         }
 
-        return new GlBufferSegment(this, bestSegment.getStart(), len);
+        return new GlBufferRegion(this, bestSegment.getStart(), len);
     }
 
     public void delete() {
-        try (CommandList commands = this.device.createCommandList()) {
-            commands.deleteBuffer(this.vertexBuffer);
-        }
+        this.memoryTracker.onMemoryFree(this.usedBytes);
+        this.memoryTracker.onMemoryRelease(this.vertexBuffer.getSize());
+
+        this.vertexBuffer.delete();
     }
 
     public boolean isEmpty() {
@@ -130,5 +161,11 @@ public class GlBufferArena {
 
     public GlBuffer getBuffer() {
         return this.vertexBuffer;
+    }
+
+    private void checkBufferBound() {
+        if (!this.isBufferBound) {
+            throw new IllegalStateException("Buffer is not bound");
+        }
     }
 }

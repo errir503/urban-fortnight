@@ -1,7 +1,5 @@
 package me.jellysquid.mods.sodium.client.render.chunk;
 
-import me.jellysquid.mods.sodium.client.gl.device.CommandList;
-import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
 import me.jellysquid.mods.sodium.client.model.vertex.type.ChunkVertexType;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildResult;
 import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderListIterator;
@@ -21,17 +19,16 @@ public interface ChunkRenderBackend<T extends ChunkGraphicsState> {
      * Drains the iterator of items and processes each build task's result serially. After this method returns, all
      * drained results should be processed.
      */
-    void upload(CommandList commandList, Iterator<ChunkBuildResult<T>> queue);
+    void upload(Iterator<ChunkBuildResult<T>> queue);
 
     /**
      * Renders the given chunk render list to the active framebuffer.
-     * @param commandList The command list which OpenGL commands should be serialized to
      * @param renders An iterator over the list of chunks to be rendered
      * @param camera The camera context containing chunk offsets for the current render
      */
-    void render(CommandList commandList, ChunkRenderListIterator<T> renders, ChunkCameraContext camera);
+    void render(ChunkRenderListIterator<T> renders, ChunkCameraContext camera);
 
-    void createShaders(RenderDevice device);
+    void createShaders();
 
     void begin(MatrixStack matrixStack);
 

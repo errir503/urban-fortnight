@@ -1,7 +1,8 @@
 package me.jellysquid.mods.sodium.client.render.chunk.shader;
 
-import me.jellysquid.mods.sodium.client.gl.compat.LegacyFogHelper;
-import org.lwjgl.opengl.GL20C;
+import me.jellysquid.mods.sodium.client.gl.util.GlFogHelper;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL20;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.FloatBuffer;
@@ -43,7 +44,7 @@ public abstract class ChunkShaderFogComponent {
         public void setup() {
             ChunkShaderFogComponent.setupColorUniform(this.uFogColor);
 
-            GL20C.glUniform1f(this.uFogDensity, LegacyFogHelper.getFogDensity());
+            GL20.glUniform1f(this.uFogDensity, GlFogHelper.getFogDensity());
         }
     }
 
@@ -62,11 +63,11 @@ public abstract class ChunkShaderFogComponent {
         public void setup() {
             ChunkShaderFogComponent.setupColorUniform(this.uFogColor);
 
-            float end = LegacyFogHelper.getFogEnd();
-            float start = LegacyFogHelper.getFogStart();
+            float end = GlFogHelper.getFogEnd();
+            float start = GlFogHelper.getFogStart();
 
-            GL20C.glUniform1f(this.uFogLength, end - start);
-            GL20C.glUniform1f(this.uFogEnd, end);
+            GL20.glUniform1f(this.uFogLength, end - start);
+            GL20.glUniform1f(this.uFogEnd, end);
         }
     }
 
@@ -76,9 +77,9 @@ public abstract class ChunkShaderFogComponent {
      */
     private static void setupColorUniform(int index) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            FloatBuffer buf = stack.mallocFloat(4);
-            LegacyFogHelper.getFogColor(buf);
-            GL20C.glUniform4fv(index, buf);
+            FloatBuffer bufFogColor = stack.mallocFloat(4);
+            GL11.glGetFloatv(GL11.GL_FOG_COLOR, bufFogColor);
+            GL20.glUniform4fv(index, bufFogColor);
         }
     }
 

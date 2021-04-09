@@ -1,7 +1,5 @@
 package me.jellysquid.mods.sodium.client.gl;
 
-import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
-
 /**
  * An abstract object used to represent objects in OpenGL code safely. This class hides the direct handle to a OpenGL
  * object, requiring that it first be checked by all callers to prevent null pointer de-referencing. However, this will
@@ -11,12 +9,7 @@ import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
 public class GlObject {
     private static final int INVALID_HANDLE = Integer.MIN_VALUE;
 
-    protected final RenderDevice device;
     private int handle = INVALID_HANDLE;
-
-    public GlObject(RenderDevice owner) {
-        this.device = owner;
-    }
 
     protected final void setHandle(int handle) {
         this.handle = handle;
@@ -38,11 +31,7 @@ public class GlObject {
         return this.handle != INVALID_HANDLE;
     }
 
-    public final void invalidateHandle() {
+    protected final void invalidateHandle() {
         this.handle = INVALID_HANDLE;
-    }
-
-    public RenderDevice getDevice() {
-        return this.device;
     }
 }
