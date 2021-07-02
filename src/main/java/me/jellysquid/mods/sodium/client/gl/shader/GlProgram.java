@@ -1,14 +1,12 @@
 package me.jellysquid.mods.sodium.client.gl.shader;
 
 import me.jellysquid.mods.sodium.client.gl.GlObject;
-import me.jellysquid.mods.sodium.client.gl.attribute.GlVertexAttribute;
 import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
-import me.jellysquid.mods.sodium.client.render.chunk.shader.ChunkShaderBindingPoints;
 import net.minecraft.util.Identifier;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lwjgl.opengl.GL20C;
-import org.lwjgl.opengl.GL20C;
+import org.lwjgl.opengl.GL30C;
 
 /**
  * An OpenGL shader program.
@@ -16,12 +14,7 @@ import org.lwjgl.opengl.GL20C;
 public abstract class GlProgram extends GlObject {
     private static final Logger LOGGER = LogManager.getLogger(GlProgram.class);
 
-    private final Identifier name;
-
-    protected GlProgram(RenderDevice owner, Identifier name, int program) {
-        super(owner);
-
-        this.name = name;
+    protected GlProgram(int program) {
         this.setHandle(program);
     }
 
@@ -35,10 +28,6 @@ public abstract class GlProgram extends GlObject {
 
     public void unbind() {
         GL20C.glUseProgram(0);
-    }
-
-    public Identifier getName() {
-        return this.name;
     }
 
     /**
@@ -102,17 +91,23 @@ public abstract class GlProgram extends GlObject {
                 throw new RuntimeException("Shader program linking failed, see log for details");
             }
 
-            return factory.create(this.name, this.program);
+            return factory.create(this.program);
         }
 
         public Builder bindAttribute(String name, ShaderBindingPoint binding) {
-            GL20C.glBindAttribLocation(this.program, binding.getGenericAttributeIndex(), name);
+            GL20C.glBindAttribLocation(this.program, binding.genericAttributeIndex(), name);
+
+            return this;
+        }
+
+        public Builder bindFragmentData(String name, ShaderBindingPoint binding) {
+            GL30C.glBindFragDataLocation(this.program, binding.genericAttributeIndex(), name);
 
             return this;
         }
     }
 
     public interface ProgramFactory<P extends GlProgram> {
-        P create(Identifier name, int handle);
+        P create(int handle);
     }
 }

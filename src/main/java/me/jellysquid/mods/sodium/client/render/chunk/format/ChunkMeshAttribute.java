@@ -1,8 +1,9 @@
 package me.jellysquid.mods.sodium.client.render.chunk.format;
 
 public enum ChunkMeshAttribute {
+    OFFSET,
     POSITION,
     COLOR,
-    TEXTURE,
-    LIGHT
+    BLOCK_TEXTURE,
+    LIGHT_TEXTURE
 }

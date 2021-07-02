@@ -8,8 +8,6 @@ import net.fabricmc.loader.api.ModContainer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.nio.file.Paths;
-
 public class SodiumClientMod implements ClientModInitializer {
     private static SodiumGameOptions CONFIG;
     private static Logger LOGGER;
@@ -44,14 +42,14 @@ public class SodiumClientMod implements ClientModInitializer {
     }
 
     private static SodiumGameOptions loadConfig() {
-        SodiumGameOptions config = SodiumGameOptions.load(Paths.get("config", "sodium-options.json"));
+        SodiumGameOptions config = SodiumGameOptions.load(FabricLoader.getInstance().getConfigDir().resolve("sodium-options.json"));
         onConfigChanged(config);
 
         return config;
     }
 
     public static void onConfigChanged(SodiumGameOptions options) {
-        UnsafeUtil.setEnabled(options.advanced.useMemoryIntrinsics);
+        UnsafeUtil.setEnabled(options.advanced.allowDirectMemoryAccess);
     }
 
     public static String getVersion() {

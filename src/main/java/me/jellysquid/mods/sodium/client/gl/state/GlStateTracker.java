@@ -3,7 +3,6 @@ package me.jellysquid.mods.sodium.client.gl.state;
 import me.jellysquid.mods.sodium.client.gl.array.GlVertexArray;
 import me.jellysquid.mods.sodium.client.gl.buffer.GlBuffer;
 import me.jellysquid.mods.sodium.client.gl.buffer.GlBufferTarget;
-import me.jellysquid.mods.sodium.client.gl.tessellation.GlTessellation;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 
@@ -20,6 +19,22 @@ public class GlStateTracker {
 
     public GlStateTracker() {
         this.clearRestoreState();
+    }
+
+    public void notifyVertexArrayDeleted(GlVertexArray vertexArray) {
+        if (this.vertexArrayState == vertexArray.handle()) {
+            this.vertexArrayState = UNASSIGNED_HANDLE;
+        }
+    }
+
+    public void notifyBufferDeleted(GlBuffer buffer) {
+        int h = buffer.handle();
+
+        for (int i = 0; i < this.bufferState.length; i++) {
+            if (this.bufferState[i] == h) {
+                this.bufferState[i] = UNASSIGNED_HANDLE;
+            }
+        }
     }
 
     public boolean makeBufferActive(GlBufferTarget target, GlBuffer buffer) {

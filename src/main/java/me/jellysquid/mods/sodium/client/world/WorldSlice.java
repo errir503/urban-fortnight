@@ -8,6 +8,7 @@ import me.jellysquid.mods.sodium.client.world.cloned.ChunkRenderContext;
 import me.jellysquid.mods.sodium.client.world.cloned.ClonedChunkSection;
 import me.jellysquid.mods.sodium.client.world.cloned.ClonedChunkSectionCache;
 import me.jellysquid.mods.sodium.client.world.cloned.palette.ClonedPalette;
+import net.fabricmc.fabric.api.rendering.data.v1.RenderAttachedBlockView;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.fluid.FluidState;
@@ -21,6 +22,7 @@ import net.minecraft.world.biome.source.BiomeAccess;
 import net.minecraft.world.chunk.*;
 import net.minecraft.world.chunk.light.LightingProvider;
 import net.minecraft.world.level.ColorResolver;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
@@ -34,7 +36,7 @@ import java.util.Map;
  *
  * Object pooling should be used to avoid huge allocations as this class contains many large arrays.
  */
-public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
+public class WorldSlice implements BlockRenderView, BiomeAccess.Storage, RenderAttachedBlockView {
     // The number of blocks on each axis in a section.
     private static final int SECTION_BLOCK_LENGTH = 16;
 
@@ -70,7 +72,7 @@ public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
     private ClonedChunkSection[] sections;
 
     // Biome caches for each chunk section
-    private BiomeCache[] biomeCaches;
+    private final BiomeCache[] biomeCaches;
 
     // The biome blend caches for each color resolver type
     // This map is always re-initialized, but the caches themselves are taken from an object pool
@@ -91,7 +93,7 @@ public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
 
     public static ChunkRenderContext prepare(World world, ChunkSectionPos origin, ClonedChunkSectionCache sectionCache) {
         WorldChunk chunk = world.getChunk(origin.getX(), origin.getZ());
-        ChunkSection section = chunk.getSectionArray()[origin.getY()];
+        ChunkSection section = chunk.getSectionArray()[world.sectionCoordToIndex(origin.getY())];
 
         // If the chunk section is absent or empty, simply terminate now. There will never be anything in this chunk
         // section to render, so we need to signal that a chunk render task shouldn't created. This saves a considerable
@@ -189,14 +191,14 @@ public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
 
         ChunkSectionPos pos = section.getPosition();
 
-        int minBlockX = Math.max(box.minX, pos.getMinX());
-        int maxBlockX = Math.min(box.maxX, pos.getMaxX());
+        int minBlockX = Math.max(box.getMinX(), pos.getMinX());
+        int maxBlockX = Math.min(box.getMaxX(), pos.getMaxX());
 
-        int minBlockY = Math.max(box.minY, pos.getMinY());
-        int maxBlockY = Math.min(box.maxY, pos.getMaxY());
+        int minBlockY = Math.max(box.getMinY(), pos.getMinY());
+        int maxBlockY = Math.min(box.getMaxY(), pos.getMaxY());
 
-        int minBlockZ = Math.max(box.minZ, pos.getMinZ());
-        int maxBlockZ = Math.min(box.maxZ, pos.getMaxZ());
+        int minBlockZ = Math.max(box.getMinZ(), pos.getMinZ());
+        int maxBlockZ = Math.min(box.getMaxZ(), pos.getMaxZ());
 
         for (int y = minBlockY; y <= maxBlockY; y++) {
             for (int z = minBlockZ; z <= maxBlockZ; z++) {
@@ -227,11 +229,6 @@ public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
 
         return this.blockStatesArrays[getLocalSectionIndex(relX >> 4, relY >> 4, relZ >> 4)]
                 [getLocalBlockIndex(relX & 15, relY & 15, relZ & 15)];
-    }
-
-    public BlockState getBlockStateRelative(int x, int y, int z) {
-        return this.blockStatesArrays[getLocalSectionIndex(x >> 4, y >> 4, z >> 4)]
-                [getLocalBlockIndex(x & 15, y & 15, z & 15)];
     }
 
     @Override
@@ -347,5 +344,25 @@ public class WorldSlice implements BlockRenderView, BiomeAccess.Storage {
 
     public static int getLocalChunkIndex(int x, int z) {
         return z << TABLE_BITS | x;
+    }
+
+    @Override
+    public int getHeight() {
+        return this.world.getHeight();
+    }
+
+    @Override
+    public int getBottomY() {
+        return this.world.getBottomY();
+    }
+
+    @Override
+    public @Nullable Object getBlockEntityRenderAttachment(BlockPos pos) {
+        int relX = pos.getX() - this.baseX;
+        int relY = pos.getY() - this.baseY;
+        int relZ = pos.getZ() - this.baseZ;
+
+        return this.sections[WorldSlice.getLocalSectionIndex(relX >> 4, relY >> 4, relZ >> 4)]
+                .getBlockEntityRenderAttachment(relX & 15, relY & 15, relZ & 15);
     }
 }
