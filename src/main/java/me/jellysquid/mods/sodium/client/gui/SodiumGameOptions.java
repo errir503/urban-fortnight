@@ -3,9 +3,11 @@ package me.jellysquid.mods.sodium.client.gui;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import me.jellysquid.mods.sodium.client.SodiumClientMod;
 import me.jellysquid.mods.sodium.client.gui.options.TextProvider;
 import net.minecraft.client.option.GraphicsMode;
+import net.minecraft.text.LiteralText;
+import net.minecraft.text.Text;
+import net.minecraft.text.TranslatableText;
 
 import java.io.FileReader;
 import java.io.IOException;
@@ -21,12 +23,18 @@ public class SodiumGameOptions {
     private Path configPath;
 
     public static class AdvancedSettings {
+        public ArenaMemoryAllocator arenaMemoryAllocator = null;
+
         public boolean animateOnlyVisibleTextures = true;
         public boolean useEntityCulling = true;
         public boolean useParticleCulling = true;
         public boolean useFogOcclusion = true;
         public boolean useBlockFaceCulling = true;
         public boolean allowDirectMemoryAccess = true;
+        public boolean enableMemoryTracing = false;
+        public boolean useAdvancedStagingBuffers = true;
+
+        public int maxPreRenderedFrames = 3;
     }
 
     public static class QualitySettings {
@@ -41,19 +49,39 @@ public class SodiumGameOptions {
         public boolean hideDonationButton = false;
     }
 
-    public enum GraphicsQuality implements TextProvider {
-        DEFAULT("Default"),
-        FANCY("Fancy"),
-        FAST("Fast");
+    public enum ArenaMemoryAllocator implements TextProvider {
+        ASYNC("Async"),
+        SWAP("Swap");
 
         private final String name;
 
-        GraphicsQuality(String name) {
+        ArenaMemoryAllocator(String name) {
             this.name = name;
         }
 
         @Override
-        public String getLocalizedName() {
+        public Text getLocalizedName() {
+            return new LiteralText(this.name);
+        }
+
+        public String getName() {
+            return this.name;
+        }
+    }
+
+    public enum GraphicsQuality implements TextProvider {
+        DEFAULT("generator.default"),
+        FANCY("options.clouds.fancy"),
+        FAST("options.clouds.fast");
+
+        private final Text name;
+
+        GraphicsQuality(String name) {
+            this.name = new TranslatableText(name);
+        }
+
+        @Override
+        public Text getLocalizedName() {
             return this.name;
         }
 
@@ -82,6 +110,10 @@ public class SodiumGameOptions {
         }
 
         config.configPath = path;
+
+        if (config.advanced.arenaMemoryAllocator == null) {
+            config.advanced.arenaMemoryAllocator = ArenaMemoryAllocator.ASYNC;
+        }
 
         try {
             config.writeChanges();
