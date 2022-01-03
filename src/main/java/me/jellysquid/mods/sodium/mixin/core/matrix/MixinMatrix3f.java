@@ -1,15 +1,13 @@
 package me.jellysquid.mods.sodium.mixin.core.matrix;
 
-import me.jellysquid.mods.sodium.util.packed.Normal3b;
-import me.jellysquid.mods.sodium.interop.vanilla.math.matrix.Matrix3fExtended;
+import me.jellysquid.mods.sodium.client.util.Norm3b;
+import me.jellysquid.mods.sodium.client.util.math.Matrix3fExtended;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Matrix3f;
 import net.minecraft.util.math.Quaternion;
 import net.minecraft.util.math.Vec3i;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-
-import java.nio.FloatBuffer;
 
 @Mixin(Matrix3f.class)
 public class MixinMatrix3f implements Matrix3fExtended {
@@ -91,7 +89,7 @@ public class MixinMatrix3f implements Matrix3fExtended {
         float y2 = this.a10 * x + this.a11 * y + this.a12 * z;
         float z2 = this.a20 * x + this.a21 * y + this.a22 * z;
 
-        return Normal3b.pack(x2, y2, z2);
+        return Norm3b.pack(x2, y2, z2);
     }
 
     private void rotateX(Quaternion quaternion) {
@@ -273,22 +271,5 @@ public class MixinMatrix3f implements Matrix3fExtended {
     @Override
     public float getA22() {
         return this.a22;
-    }
-
-    @Override
-    public void writeColumnMajor3x4(FloatBuffer buf) {
-        buf.put(pack3x4(0, 0), this.a00);
-        buf.put(pack3x4(0, 1), this.a01);
-        buf.put(pack3x4(0, 2), this.a02);
-        buf.put(pack3x4(1, 0), this.a10);
-        buf.put(pack3x4(1, 1), this.a11);
-        buf.put(pack3x4(1, 2), this.a12);
-        buf.put(pack3x4(2, 0), this.a20);
-        buf.put(pack3x4(2, 1), this.a21);
-        buf.put(pack3x4(2, 2), this.a22);
-    }
-
-    private static int pack3x4(int x, int y) {
-        return (y * 4) + x;
     }
 }
