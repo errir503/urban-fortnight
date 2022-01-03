@@ -1,6 +1,6 @@
 package me.jellysquid.mods.sodium.mixin.features.render_layer.leaves;
 
-import me.jellysquid.mods.sodium.client.SodiumClientMod;
+import me.jellysquid.mods.sodium.SodiumClientMod;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.LeavesBlock;
@@ -18,7 +18,7 @@ public class MixinLeavesBlock extends Block {
 
     @Override
     public boolean isSideInvisible(BlockState state, BlockState stateFrom, Direction direction) {
-        if (SodiumClientMod.options().quality.leavesQuality.isFancy(MinecraftClient.getInstance().options.graphicsMode)) {
+        if (SodiumClientMod.options().quality.leavesQuality.isFancy(MinecraftClient.getInstance().options.getGraphicsMode().getValue())) {
             return super.isSideInvisible(state, stateFrom, direction);
         } else {
             return stateFrom.getBlock() instanceof LeavesBlock || super.isSideInvisible(state, stateFrom, direction);

@@ -1,12 +1,12 @@
 package me.jellysquid.mods.sodium.mixin.core.pipeline;
 
-import me.jellysquid.mods.sodium.client.SodiumClientMod;
-import me.jellysquid.mods.sodium.client.gl.attribute.BufferVertexFormat;
-import me.jellysquid.mods.sodium.client.model.vertex.VertexDrain;
-import me.jellysquid.mods.sodium.client.model.vertex.VertexSink;
-import me.jellysquid.mods.sodium.client.model.vertex.buffer.VertexBufferView;
-import me.jellysquid.mods.sodium.client.model.vertex.type.BlittableVertexType;
-import me.jellysquid.mods.sodium.client.model.vertex.type.VertexType;
+import me.jellysquid.mods.sodium.SodiumClientMod;
+import me.jellysquid.mods.sodium.opengl.attribute.BufferVertexFormat;
+import me.jellysquid.mods.sodium.render.vertex.VertexDrain;
+import me.jellysquid.mods.sodium.render.vertex.VertexSink;
+import me.jellysquid.mods.sodium.render.vertex.buffer.VertexBufferView;
+import me.jellysquid.mods.sodium.render.vertex.type.BlittableVertexType;
+import me.jellysquid.mods.sodium.render.vertex.type.VertexType;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexFormat;
@@ -44,7 +44,7 @@ public abstract class MixinBufferBuilder implements VertexBufferView, VertexDrai
     @Override
     public boolean ensureBufferCapacity(int bytes) {
         // Ensure that there is always space for 1 more vertex; see BufferBuilder.next()
-        bytes += format.getVertexSize();
+        bytes += this.format.getVertexSizeByte();
 
         if (this.elementOffset + bytes <= this.buffer.capacity()) {
             return false;
