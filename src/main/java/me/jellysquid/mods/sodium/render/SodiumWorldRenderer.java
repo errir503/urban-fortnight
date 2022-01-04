@@ -4,19 +4,17 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import me.jellysquid.mods.sodium.SodiumClientMod;
-import me.jellysquid.mods.sodium.opengl.device.CommandList;
-import me.jellysquid.mods.sodium.opengl.device.RenderDevice;
-import me.jellysquid.mods.sodium.render.chunk.draw.ChunkRenderMatrices;
-import me.jellysquid.mods.sodium.render.world.ChunkTracker;
-import me.jellysquid.mods.sodium.render.chunk.RenderSectionManager;
-import me.jellysquid.mods.sodium.render.chunk.state.ChunkRenderData;
-import me.jellysquid.mods.sodium.render.chunk.passes.ChunkRenderPass;
-import me.jellysquid.mods.sodium.render.chunk.passes.ChunkRenderPassManager;
-import me.jellysquid.mods.sodium.render.terrain.context.ImmediateTerrainRenderCache;
-import me.jellysquid.mods.sodium.util.NativeBuffer;
 import me.jellysquid.mods.sodium.interop.vanilla.math.frustum.Frustum;
 import me.jellysquid.mods.sodium.interop.vanilla.mixin.WorldRendererHolder;
+import me.jellysquid.mods.sodium.opengl.device.RenderDevice;
+import me.jellysquid.mods.sodium.render.chunk.RenderSectionManager;
+import me.jellysquid.mods.sodium.render.chunk.draw.ChunkRenderMatrices;
+import me.jellysquid.mods.sodium.render.chunk.passes.ChunkRenderPassManager;
+import me.jellysquid.mods.sodium.render.chunk.state.ChunkRenderData;
+import me.jellysquid.mods.sodium.render.terrain.context.ImmediateTerrainRenderCache;
 import me.jellysquid.mods.sodium.util.ListUtil;
+import me.jellysquid.mods.sodium.util.NativeBuffer;
+import me.jellysquid.mods.sodium.world.ChunkTracker;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -107,9 +105,7 @@ public class SodiumWorldRenderer {
 
         ImmediateTerrainRenderCache.createRenderContext(this.world);
 
-        try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
-            this.initRenderer(commandList);
-        }
+        this.initRenderer(RenderDevice.INSTANCE);
     }
 
     private void unloadWorld() {
@@ -214,12 +210,8 @@ public class SodiumWorldRenderer {
      * Performs a render pass for the given {@link RenderLayer} and draws all visible chunks for it.
      */
     public void drawChunkLayer(RenderLayer renderLayer, MatrixStack matrixStack, double x, double y, double z) {
-        ChunkRenderPass pass = this.renderPassManager.getRenderPassForLayer(renderLayer);
-        pass.startDrawing();
-
-        this.renderSectionManager.renderLayer(ChunkRenderMatrices.from(matrixStack), pass, x, y, z);
-
-        pass.endDrawing();
+        var renderPass = this.renderPassManager.getRenderPassForLayer(renderLayer);
+        this.renderSectionManager.renderLayer(ChunkRenderMatrices.from(matrixStack), renderPass, x, y, z);
     }
 
     public void reload() {
@@ -227,12 +219,10 @@ public class SodiumWorldRenderer {
             return;
         }
 
-        try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
-            this.initRenderer(commandList);
-        }
+        this.initRenderer(RenderDevice.INSTANCE);
     }
 
-    private void initRenderer(CommandList commandList) {
+    private void initRenderer(RenderDevice device) {
         if (this.renderSectionManager != null) {
             this.renderSectionManager.destroy();
             this.renderSectionManager = null;
@@ -242,7 +232,7 @@ public class SodiumWorldRenderer {
 
         this.renderPassManager = ChunkRenderPassManager.createDefaultMappings();
 
-        this.renderSectionManager = new RenderSectionManager(this, this.renderPassManager, this.world, this.renderDistance, commandList);
+        this.renderSectionManager = new RenderSectionManager(device, this, this.renderPassManager, this.world, this.renderDistance);
         this.renderSectionManager.reloadChunks(this.chunkTracker);
     }
 
