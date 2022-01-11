@@ -1,87 +1,80 @@
 package me.jellysquid.mods.sodium.render.chunk.draw;
 
-import com.google.common.collect.Lists;
-import me.jellysquid.mods.sodium.SodiumClientMod;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectArrays;
 import me.jellysquid.mods.sodium.interop.vanilla.mixin.LightmapTextureManagerAccessor;
-import me.jellysquid.mods.sodium.opengl.array.*;
-import me.jellysquid.mods.sodium.opengl.attribute.VertexAttributeBinding;
-import me.jellysquid.mods.sodium.opengl.buffer.Buffer;
+import me.jellysquid.mods.sodium.opengl.array.DrawCommandList;
 import me.jellysquid.mods.sodium.opengl.device.RenderDevice;
+import me.jellysquid.mods.sodium.opengl.pipeline.PipelineState;
 import me.jellysquid.mods.sodium.opengl.types.IntType;
 import me.jellysquid.mods.sodium.opengl.types.PrimitiveType;
-import me.jellysquid.mods.sodium.render.buffer.ElementRange;
+import me.jellysquid.mods.sodium.render.buffer.VertexRange;
 import me.jellysquid.mods.sodium.render.chunk.RenderSection;
 import me.jellysquid.mods.sodium.render.chunk.passes.ChunkRenderPass;
 import me.jellysquid.mods.sodium.render.chunk.region.RenderRegion;
-import me.jellysquid.mods.sodium.render.chunk.shader.ChunkShaderBindingPoints;
 import me.jellysquid.mods.sodium.render.chunk.shader.ChunkShaderInterface;
-import me.jellysquid.mods.sodium.render.chunk.shader.ChunkShaderOptions;
-import me.jellysquid.mods.sodium.render.chunk.state.ChunkRenderBounds;
 import me.jellysquid.mods.sodium.render.chunk.state.UploadedChunkMesh;
-import me.jellysquid.mods.sodium.render.terrain.format.TerrainMeshAttribute;
+import me.jellysquid.mods.sodium.render.sequence.SequenceBuilder;
+import me.jellysquid.mods.sodium.render.sequence.SequenceIndexBuffer;
+import me.jellysquid.mods.sodium.render.stream.MappedStreamingBuffer;
+import me.jellysquid.mods.sodium.render.stream.StreamingBuffer;
 import me.jellysquid.mods.sodium.render.terrain.format.TerrainVertexType;
 import me.jellysquid.mods.sodium.render.terrain.quad.properties.ChunkMeshFace;
-import me.jellysquid.mods.sodium.util.draw.MultiDrawBatch;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.AbstractTexture;
 import net.minecraft.client.texture.SpriteAtlasTexture;
 import net.minecraft.client.texture.TextureManager;
+import org.joml.Matrix4f;
+import org.lwjgl.system.MemoryUtil;
 
-import java.util.List;
 import java.util.Map;
 
 public class DefaultChunkRenderer extends ShaderChunkRenderer {
-    private final MultiDrawBatch[] batches;
+    private static final int INSTANCE_DATA_STRIDE = 16;
+    private static final int COMMAND_DATA_SIZE = 20;
 
-    private final Buffer chunkInfoBuffer;
-    private final boolean isBlockFaceCullingEnabled = SodiumClientMod.options().performance.useBlockFaceCulling;
+    private static final int MAX_COMMAND_BUFFER_SIZE = RenderRegion.REGION_SIZE * ChunkMeshFace.COUNT * COMMAND_DATA_SIZE;
+    private static final int MAX_INSTANCE_DATA_SIZE = RenderRegion.REGION_SIZE * INSTANCE_DATA_STRIDE;
 
-    private final VertexArray<BufferTarget> vertexArray;
+    private final StreamingBuffer commandBuffer;
+    private final StreamingBuffer instanceDataBuffer;
+
+    private final SequenceIndexBuffer indexBuffer;
 
     public DefaultChunkRenderer(RenderDevice device, TerrainVertexType vertexType) {
         super(device, vertexType);
 
-        this.chunkInfoBuffer = device.createBuffer(RenderRegion.REGION_SIZE * 16, (buffer) -> {
-            for (int x = 0; x < RenderRegion.REGION_WIDTH; x++) {
-                for (int y = 0; y < RenderRegion.REGION_HEIGHT; y++) {
-                    for (int z = 0; z < RenderRegion.REGION_LENGTH; z++) {
-                        int offset = RenderRegion.getChunkIndex(x, y, z) * 16;
-
-                        buffer.putFloat(offset + 0, x * 16.0f);
-                        buffer.putFloat(offset + 4, y * 16.0f);
-                        buffer.putFloat(offset + 8, z * 16.0f);
-                    }
-                }
-            }
-        });
-
-        this.vertexArray = device.createVertexArray(new VertexArrayDescription<>(BufferTarget.class, List.of(
-                new VertexArrayResourceBinding<>(BufferTarget.VERTICES, new VertexAttributeBinding[] {
-                        new VertexAttributeBinding(ChunkShaderBindingPoints.ATTRIBUTE_POSITION_ID,
-                                this.vertexFormat.getAttribute(TerrainMeshAttribute.POSITION_ID)),
-                        new VertexAttributeBinding(ChunkShaderBindingPoints.ATTRIBUTE_COLOR,
-                                this.vertexFormat.getAttribute(TerrainMeshAttribute.COLOR)),
-                        new VertexAttributeBinding(ChunkShaderBindingPoints.ATTRIBUTE_BLOCK_TEXTURE,
-                                this.vertexFormat.getAttribute(TerrainMeshAttribute.BLOCK_TEXTURE)),
-                        new VertexAttributeBinding(ChunkShaderBindingPoints.ATTRIBUTE_LIGHT_TEXTURE,
-                                this.vertexFormat.getAttribute(TerrainMeshAttribute.LIGHT_TEXTURE))
-                })
-        )));
-
-        this.batches = new MultiDrawBatch[IntType.VALUES.length];
-
-        for (int i = 0; i < this.batches.length; i++) {
-            this.batches[i] = MultiDrawBatch.create(ChunkMeshFace.COUNT * RenderRegion.REGION_SIZE);
-        }
+        this.commandBuffer = new MappedStreamingBuffer(device, 16 * 1024 * 1024);
+        this.instanceDataBuffer = new MappedStreamingBuffer(device, 4 * 1024 * 1024);
+        this.indexBuffer = new SequenceIndexBuffer(device, SequenceBuilder.QUADS);
     }
 
     @Override
     public void render(ChunkRenderMatrices matrices, RenderDevice device,
                        ChunkRenderList list, ChunkRenderPass renderPass,
                        ChunkCameraContext camera) {
-        var options = new ChunkShaderOptions(renderPass, this.vertexType);
-        var program = this.compileProgram(options);
+        var pipeline = this.getPipeline(renderPass);
 
+        device.usePipeline(pipeline, (drawCommandList, programInterface, pipelineState) -> {
+            this.bindTextures(renderPass, pipelineState);
+            this.updateUniforms(matrices, programInterface);
+
+            for (Map.Entry<RenderRegion, ObjectArrayList<RenderSection>> entry : sortedRegions(list, renderPass.usesReverseOrder())) {
+                var region = entry.getKey();
+                var sections = entry.getValue();
+
+                var handles = this.prepareDrawBatches(sections, renderPass, camera, region.getResources());
+
+                if (handles == null) {
+                    continue;
+                }
+
+                this.executeDrawBatches(drawCommandList, programInterface, region.getResources(), handles);
+            }
+        });
+    }
+
+    private void bindTextures(ChunkRenderPass renderPass, PipelineState pipelineState) {
         MinecraftClient client = MinecraftClient.getInstance();
         TextureManager textureManager = client.getTextureManager();
 
@@ -91,154 +84,161 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
         AbstractTexture blockAtlasTex = textureManager.getTexture(SpriteAtlasTexture.BLOCK_ATLAS_TEXTURE);
         AbstractTexture lightTex = lightmapTextureManager.getTexture();
 
-        device.usePipeline(renderPass.pipeline(), (pipelineCommands, pipelineState) -> {
-            pipelineState.bindTexture(0, blockAtlasTex.getGlId(), renderPass.mipped() ? this.blockTextureMippedSampler : this.blockTextureSampler);
-            pipelineState.bindTexture(1, lightTex.getGlId(), this.lightTextureSampler);
-
-            pipelineCommands.useProgram(program, (programCommands, programInterface) -> {
-                programInterface.setup();
-                programInterface.uniformProjectionMatrix.set(matrices.projection());
-                programInterface.uniformModelViewMatrix.set(matrices.modelView());
-                programInterface.uniformBlockDrawParameters.bindBuffer(this.chunkInfoBuffer);
-
-                programCommands.useVertexArray(this.vertexArray, (drawCommandList) -> {
-                    for (Map.Entry<RenderRegion, List<RenderSection>> entry : sortedRegions(list, renderPass.isTranslucent())) {
-                        RenderRegion region = entry.getKey();
-                        List<RenderSection> regionSections = entry.getValue();
-
-                        if (!this.buildDrawBatches(regionSections, renderPass, camera)) {
-                            continue;
-                        }
-
-                        this.setModelMatrixUniforms(programInterface, region, camera);
-                        this.executeDrawBatches(drawCommandList, region.getArenas());
-                    }
-                });
-            });
-        });
+        pipelineState.bindTexture(0, blockAtlasTex.getGlId(), renderPass.mipped() ? this.blockTextureMippedSampler : this.blockTextureSampler);
+        pipelineState.bindTexture(1, lightTex.getGlId(), this.lightTextureSampler);
     }
 
-    private boolean buildDrawBatches(List<RenderSection> sections, ChunkRenderPass pass, ChunkCameraContext camera) {
-        for (MultiDrawBatch batch : this.batches) {
-            batch.begin();
+    private void updateUniforms(ChunkRenderMatrices matrices, ChunkShaderInterface programInterface) {
+        programInterface.setFogUniforms();
+
+        if (programInterface.uniformProjectionMatrix != null) {
+            programInterface.uniformProjectionMatrix.set(matrices.projection());
         }
 
-        for (RenderSection render : sortedChunks(sections, pass.isTranslucent())) {
-            UploadedChunkMesh state = render.getMesh(pass);
+        if (programInterface.uniformModelViewMatrix != null) {
+            programInterface.uniformModelViewMatrix.set(matrices.modelView());
+        }
+
+        if (programInterface.uniformModelViewProjectionMatrix != null) {
+            var mvpMatrix = new Matrix4f();
+            mvpMatrix.set(matrices.projection());
+            mvpMatrix.mul(matrices.modelView());
+
+            programInterface.uniformModelViewProjectionMatrix.set(mvpMatrix);
+        }
+    }
+
+    private Handles prepareDrawBatches(ObjectArrayList<RenderSection> sections, ChunkRenderPass pass, ChunkCameraContext camera, RenderRegion.Resources regionResources) {
+        var meshes = regionResources.getMeshes(pass);
+
+        if (meshes == null) {
+            return null;
+        }
+
+        var alignment = this.device.properties().uniformBufferOffsetAlignment;
+
+        var commandBufferWriter = this.commandBuffer.write(MAX_COMMAND_BUFFER_SIZE, alignment);
+        var instanceDataWriter = this.instanceDataBuffer.write(MAX_INSTANCE_DATA_SIZE, alignment);
+
+        int instanceCount = 0;
+        int drawCount = 0;
+
+        int maxVertices = 0;
+
+        for (RenderSection render : sortedChunks(sections, pass.usesReverseOrder())) {
+            UploadedChunkMesh state = meshes[render.getChunkId()];
 
             if (state == null) {
                 continue;
             }
 
-            ChunkRenderBounds bounds = render.getBounds();
+            int visibilityFlags = render.getVisibilityFlags() & state.getVisibilityFlags();
 
-            long indexOffset = state.getIndexSegment()
-                    .getOffset();
+            if (visibilityFlags != 0) {
+                int baseVertex = state.getVertexSegment().getOffset();
 
-            int baseVertex = state.getVertexSegment()
-                    .getOffset() / this.vertexFormat.getStride();
+                for (int face = 0; face < ChunkMeshFace.COUNT; face++) {
+                    if ((visibilityFlags & (1 << face)) != 0) {
+                        VertexRange range = state.getMeshPart(face);
 
-            this.addDrawCall(state.getMeshPart(ChunkMeshFace.UNASSIGNED), indexOffset, baseVertex);
+                        if (range == null) {
+                            throw new IllegalStateException("Invalid visibility flag state");
+                        }
 
-            if (this.isBlockFaceCullingEnabled) {
-                if (camera.posY > bounds.y1) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.UP), indexOffset, baseVertex);
+                        pushDrawCommand(commandBufferWriter, (range.vertexCount() / 4) * 6, 1, 0, baseVertex + range.firstVertex(), instanceCount);
+                        drawCount++;
+                        maxVertices = Math.max(maxVertices, range.vertexCount());
+                    }
                 }
 
-                if (camera.posY < bounds.y2) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.DOWN), indexOffset, baseVertex);
-                }
+                float x = getCameraTranslation(render.getOriginX(), camera.blockX, camera.deltaX);
+                float y = getCameraTranslation(render.getOriginY(), camera.blockY, camera.deltaY);
+                float z = getCameraTranslation(render.getOriginZ(), camera.blockZ, camera.deltaZ);
 
-                if (camera.posX > bounds.x1) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.EAST), indexOffset, baseVertex);
-                }
-
-                if (camera.posX < bounds.x2) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.WEST), indexOffset, baseVertex);
-                }
-
-                if (camera.posZ > bounds.z1) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.SOUTH), indexOffset, baseVertex);
-                }
-
-                if (camera.posZ < bounds.z2) {
-                    this.addDrawCall(state.getMeshPart(ChunkMeshFace.NORTH), indexOffset, baseVertex);
-                }
-            } else {
-                for (ChunkMeshFace facing : ChunkMeshFace.DIRECTIONS) {
-                    this.addDrawCall(state.getMeshPart(facing), indexOffset, baseVertex);
-                }
+                pushInstanceData(instanceDataWriter, x, y, z);
+                instanceCount++;
             }
         }
 
-        boolean nonEmpty = false;
+        var commandBufferHandle = commandBufferWriter.finish();
+        var instanceDataHandle = instanceDataWriter.finish();
 
-        for (MultiDrawBatch batch : this.batches) {
-            batch.end();
-
-            nonEmpty |= !batch.isEmpty();
+        if (commandBufferHandle == null || instanceDataHandle == null) {
+            return null;
         }
 
-        return nonEmpty;
+        this.indexBuffer.ensureCapacity(maxVertices);
+
+        return new Handles(commandBufferHandle, instanceDataHandle, instanceCount, drawCount);
     }
 
-    private void executeDrawBatches(VertexArrayCommandList<BufferTarget> drawCommandList, RenderRegion.RenderRegionArenas arenas) {
-        drawCommandList.bindVertexBuffers(this.vertexArray.createResourceSet(
-                Map.of(BufferTarget.VERTICES, new VertexArrayBuffer(arenas.vertexBuffers.getBufferObject(), this.vertexFormat.getStride()))
-        ));
-        drawCommandList.bindElementBuffer(arenas.indexBuffers.getBufferObject());
-
-        for (int i = 0; i < this.batches.length; i++) {
-            MultiDrawBatch batch = this.batches[i];
-
-            if (batch.isEmpty()) {
-                continue;
-            }
-
-            drawCommandList.multiDrawElementsBaseVertex(batch.getPointerBuffer(), batch.getCountBuffer(), batch.getBaseVertexBuffer(),
-                    IntType.VALUES[i], PrimitiveType.TRIANGLES);
+    private record Handles(StreamingBuffer.Handle commandBuffer, StreamingBuffer.Handle instanceData, int instanceCount, int drawCount) {
+        public void free() {
+            this.commandBuffer.free();
+            this.instanceData.free();
         }
     }
 
-    private void setModelMatrixUniforms(ChunkShaderInterface shader, RenderRegion region, ChunkCameraContext camera) {
-        float x = getCameraTranslation(region.getOriginX(), camera.blockX, camera.deltaX);
-        float y = getCameraTranslation(region.getOriginY(), camera.blockY, camera.deltaY);
-        float z = getCameraTranslation(region.getOriginZ(), camera.blockZ, camera.deltaZ);
-
-        shader.uniformRegionOffset.setFloats(x, y, z);
+    private static void pushInstanceData(StreamingBuffer.Writer writer,float x, float y, float z) {
+        var ptr = writer.next(INSTANCE_DATA_STRIDE);
+        MemoryUtil.memPutFloat(ptr + 0, x);
+        MemoryUtil.memPutFloat(ptr + 4, y);
+        MemoryUtil.memPutFloat(ptr + 8, z);
     }
 
-    private void addDrawCall(ElementRange part, long baseIndexPointer, int baseVertexIndex) {
-        if (part != null) {
-            MultiDrawBatch batch = this.batches[part.indexType().ordinal()];
-            batch.add(baseIndexPointer + part.elementPointer(), part.elementCount(), baseVertexIndex + part.baseVertex());
-        }
+    private static void pushDrawCommand(StreamingBuffer.Writer writer, int count, int instanceCount, int firstIndex, int baseVertex, int baseInstance) {
+        var ptr = writer.next(COMMAND_DATA_SIZE);
+        MemoryUtil.memPutInt(ptr + 0, count);
+        MemoryUtil.memPutInt(ptr + 4, instanceCount);
+        MemoryUtil.memPutInt(ptr + 8, firstIndex);
+        MemoryUtil.memPutInt(ptr + 12, baseVertex);
+        MemoryUtil.memPutInt(ptr + 16, baseInstance);
+    }
+
+    private void executeDrawBatches(DrawCommandList<BufferTarget> drawCommandList, ChunkShaderInterface programInterface, RenderRegion.Resources resources, Handles handles) {
+        drawCommandList.bindVertexBuffer(BufferTarget.VERTICES, resources.vertexBuffers.getBufferObject(), 0, this.vertexFormat.getStride());
+        drawCommandList.bindElementBuffer(this.indexBuffer.getBuffer());
+
+        programInterface.bufferInstanceData.bindBuffer(handles.instanceData.getBuffer(), handles.instanceData.getOffset(), handles.instanceData.getLength());
+
+        drawCommandList.multiDrawElementsIndirect(handles.commandBuffer.getBuffer(), handles.commandBuffer.getOffset(), handles.drawCount,
+                IntType.UNSIGNED_INT, PrimitiveType.TRIANGLES);
+
+        handles.free();
     }
 
     @Override
     public void delete() {
         super.delete();
 
-        for (MultiDrawBatch batch : this.batches) {
-            batch.delete();
-        }
-
-        this.device.deleteBuffer(this.chunkInfoBuffer);
+        this.commandBuffer.delete();
+        this.instanceDataBuffer.delete();
     }
 
-    private static Iterable<Map.Entry<RenderRegion, List<RenderSection>>> sortedRegions(ChunkRenderList list, boolean translucent) {
+    @Override
+    public void flush() {
+        this.commandBuffer.flush();
+        this.instanceDataBuffer.flush();
+    }
+
+    private static Iterable<Map.Entry<RenderRegion, ObjectArrayList<RenderSection>>> sortedRegions(ChunkRenderList list, boolean translucent) {
         return list.sorted(translucent);
     }
 
-    private static Iterable<RenderSection> sortedChunks(List<RenderSection> chunks, boolean translucent) {
-        return translucent ? Lists.reverse(chunks) : chunks;
+    private static Iterable<RenderSection> sortedChunks(ObjectArrayList<RenderSection> chunks, boolean reverse) {
+        if (reverse) {
+            RenderSection[] copy = new RenderSection[chunks.size()];
+            chunks.toArray(copy);
+
+            ObjectArrays.reverse(copy);
+
+            return ObjectArrayList.wrap(copy);
+        }
+        
+        return chunks;
     }
 
     private static float getCameraTranslation(int chunkBlockPos, int cameraBlockPos, float cameraPos) {
         return (chunkBlockPos - cameraBlockPos) - cameraPos;
-    }
-
-    private enum BufferTarget {
-        VERTICES
     }
 }

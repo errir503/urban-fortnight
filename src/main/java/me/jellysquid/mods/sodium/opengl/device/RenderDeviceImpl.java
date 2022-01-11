@@ -2,25 +2,25 @@ package me.jellysquid.mods.sodium.opengl.device;
 
 import me.jellysquid.mods.sodium.opengl.array.*;
 import me.jellysquid.mods.sodium.opengl.buffer.*;
-import me.jellysquid.mods.sodium.opengl.pipeline.Blaze3DPipelineState;
-import me.jellysquid.mods.sodium.opengl.pipeline.PipelineCommandList;
-import me.jellysquid.mods.sodium.opengl.pipeline.PipelineState;
+import me.jellysquid.mods.sodium.opengl.pipeline.Blaze3DPipelineManager;
+import me.jellysquid.mods.sodium.opengl.pipeline.Pipeline;
+import me.jellysquid.mods.sodium.opengl.pipeline.PipelineImpl;
+import me.jellysquid.mods.sodium.opengl.pipeline.PipelineManager;
 import me.jellysquid.mods.sodium.opengl.sampler.Sampler;
 import me.jellysquid.mods.sodium.opengl.sampler.SamplerImpl;
-import me.jellysquid.mods.sodium.opengl.shader.*;
+import me.jellysquid.mods.sodium.opengl.shader.Program;
+import me.jellysquid.mods.sodium.opengl.shader.ProgramImpl;
+import me.jellysquid.mods.sodium.opengl.shader.ShaderBindingContext;
+import me.jellysquid.mods.sodium.opengl.shader.ShaderDescription;
 import me.jellysquid.mods.sodium.opengl.sync.Fence;
 import me.jellysquid.mods.sodium.opengl.sync.FenceImpl;
 import me.jellysquid.mods.sodium.opengl.types.IntType;
 import me.jellysquid.mods.sodium.opengl.types.PrimitiveType;
-import me.jellysquid.mods.sodium.opengl.types.RenderPipeline;
+import me.jellysquid.mods.sodium.opengl.types.RenderState;
 import me.jellysquid.mods.sodium.opengl.util.EnumBitField;
-import net.minecraft.client.render.BufferRenderer;
 import org.apache.commons.lang3.Validate;
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.opengl.GL20C;
-import org.lwjgl.opengl.GL30C;
-import org.lwjgl.opengl.GL32C;
-import org.lwjgl.opengl.GL45C;
+import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.ByteBuffer;
@@ -29,15 +29,17 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class RenderDeviceImpl implements RenderDevice {
-    private final PipelineState pipelineState;
+    private final PipelineManager pipelineManager;
+    private final RenderDeviceProperties properties;
 
     public RenderDeviceImpl() {
         // TODO: move this into platform code
-        this.pipelineState = new Blaze3DPipelineState();
+        this.pipelineManager = new Blaze3DPipelineManager();
+        this.properties = new RenderDeviceProperties();
     }
 
     @Override
-    public void copyBuffer(Buffer src, Buffer dst, long readOffset, long writeOffset, long bytes) {
+    public void copyBuffer(long bytes, Buffer src, long readOffset, Buffer dst, long writeOffset) {
         this.copyBuffer0((BufferImpl) src, (BufferImpl) dst, readOffset, writeOffset, bytes);
     }
 
@@ -70,6 +72,18 @@ public class RenderDeviceImpl implements RenderDevice {
     @Override
     public Fence createFence() {
         return new FenceImpl(GL32C.glFenceSync(GL32C.GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+    }
+
+    @Override
+    public RenderDeviceProperties properties() {
+        return this.properties;
+    }
+
+    @Override
+    public <PROGRAM, ARRAY extends Enum<ARRAY>> Pipeline<PROGRAM, ARRAY> createPipeline(RenderState state, Program<PROGRAM> program, VertexArrayDescription<ARRAY> vertexArrayDescription) {
+        var vertexArray = new VertexArrayImpl<>(GL45C.glCreateVertexArrays(), vertexArrayDescription);
+
+        return new PipelineImpl<>(state, program, vertexArray);
     }
 
     @Override
@@ -122,25 +136,24 @@ public class RenderDeviceImpl implements RenderDevice {
             throw new RuntimeException("Failed to map buffer");
         }
 
-        return new MappedBufferImpl(capacity, handle, data);
+        return new MappedBufferImpl(capacity, handle, data, mapFlags);
     }
 
     @Override
-    public <T extends Enum<T>> VertexArray<T> createVertexArray(VertexArrayDescription<T> desc) {
-        return new VertexArrayImpl<>(GL45C.glCreateVertexArrays(), desc);
+    public <PROGRAM, ARRAY extends Enum<ARRAY>> void usePipeline(Pipeline<PROGRAM, ARRAY> pipeline, PipelineGate<PROGRAM, ARRAY> gate) {
+        this.pipelineManager.bindPipeline(pipeline, (state) -> {
+            gate.run(new ImmediateDrawCommandList<>(pipeline.getVertexArray()), pipeline.getProgram().getInterface(), state);
+        });
     }
 
     @Override
-    public <T> void usePipeline(RenderPipeline pipeline, PipelineGate gate) {
-        BufferRenderer.unbindAll(); // TODO: move this into platform code
+    public void deletePipeline(Pipeline<?, ?> pipeline) {
+        this.deleteVertexArray(pipeline.getVertexArray());
+    }
 
-        try {
-            if (pipeline != null) pipeline.enable(); // TODO: require a valid pipeline object,
-
-            gate.run(new ImmediatePipelineCommandList(), this.pipelineState);
-        } finally {
-            this.pipelineState.restoreState();
-        }
+    @Override
+    public void uploadData(Buffer buffer, ByteBuffer data) {
+        GL45C.glNamedBufferSubData(buffer.handle(), 0, data);
     }
 
     @Override
@@ -168,83 +181,141 @@ public class RenderDeviceImpl implements RenderDevice {
         array.invalidateHandle();
     }
 
-    private static class ImmediateVertexArrayCommandList<T extends Enum<T>> implements VertexArrayCommandList<T> {
-        private final VertexArrayImpl<T> array;
+    private static class ImmediateDrawCommandList<T extends Enum<T>> implements DrawCommandList<T> {
+        private final VertexArray<T> array;
 
-        private VertexArrayResourceSet<T> activeVertexBuffers;
+        private final VertexArrayBuffer[] activeVertexBuffers;
         private Buffer activeElementBuffer;
+        private Buffer activeDrawIndirectBuffer;
 
-        public ImmediateVertexArrayCommandList(VertexArrayImpl<T> array) {
+        private boolean vertexBuffersDirty;
+        private boolean elementBufferDirty;
+
+        public ImmediateDrawCommandList(VertexArray<T> array) {
             this.array = array;
+
+            this.activeVertexBuffers = new VertexArrayBuffer[array.getBufferTargets().length];
         }
 
         @Override
-        public void bindVertexBuffers(VertexArrayResourceSet<T> bindings) {
-            var slots = bindings.slots;
+        public void bindElementBuffer(Buffer buffer) {
+            this.activeElementBuffer = buffer;
+            this.elementBufferDirty = true;
+        }
+
+        @Override
+        public void bindVertexBuffer(T target, Buffer buffer, int offset, int stride) {
+            this.activeVertexBuffers[target.ordinal()] = new VertexArrayBuffer(buffer, offset, stride);
+            this.vertexBuffersDirty = true;
+        }
+
+        @Override
+        public void multiDrawElementsIndirect(Buffer indirectBuffer, int indirectOffset, int indirectCount, IntType elementType, PrimitiveType primitiveType) {
+            this.setupIndexedRenderingState();
+            this.updateDrawIndirectBuffer(indirectBuffer);
+            GL43C.glMultiDrawElementsIndirect(primitiveType.getId(), elementType.getFormatId(), indirectOffset, indirectCount, 0);
+        }
+
+        private void updateDrawIndirectBuffer(Buffer indirectBuffer) {
+            if (this.activeDrawIndirectBuffer != indirectBuffer) {
+                GL45C.glBindBuffer(GL45C.GL_DRAW_INDIRECT_BUFFER, indirectBuffer.handle());
+                this.activeDrawIndirectBuffer = indirectBuffer;
+            }
+        }
+
+        @Override
+        public void multiDrawElementsBaseVertex(PointerBuffer pointer, IntBuffer count, IntBuffer baseVertex, IntType indexType, PrimitiveType primitiveType) {
+            this.setupIndexedRenderingState();
+            GL32C.glMultiDrawElementsBaseVertex(primitiveType.getId(), count, indexType.getFormatId(), pointer, baseVertex);
+        }
+
+        @Override
+        public void drawElementsBaseVertex(PrimitiveType primitiveType, IntType elementType, long elementPointer, int baseVertex, int elementCount) {
+            this.setupIndexedRenderingState();
+            GL32C.glDrawElementsBaseVertex(primitiveType.getId(), elementCount, elementType.getFormatId(), elementPointer, baseVertex);
+        }
+
+        @Override
+        public void drawElements(PrimitiveType primitiveType, IntType elementType, long elementPointer, int elementCount) {
+            this.setupIndexedRenderingState();
+            GL32C.glDrawElements(primitiveType.getId(), elementCount, elementType.getFormatId(), elementPointer);
+        }
+
+        private void setupIndexedRenderingState() {
+            this.validateElementBuffer();
+            this.validateVertexBuffers();
+            this.bindBuffers();
+        }
+
+        private void validateElementBuffer() {
+            Validate.notNull(this.activeElementBuffer, "Element buffer not bound");
+        }
+
+        private void validateVertexBuffers() {
+            for (int i = 0; i < this.activeVertexBuffers.length; i++) {
+                if (this.activeVertexBuffers[i] == null) {
+                    throw new IllegalStateException("No vertex buffer bound to target: " + this.array.getBufferTargets()[i]);
+                }
+            }
+        }
+
+        private void bindBuffers() {
+            if (this.vertexBuffersDirty) {
+                this.bindVertexBuffers();
+            }
+
+            if (this.elementBufferDirty) {
+                this.bindElementBuffer();
+            }
+        }
+
+        private void bindVertexBuffers() {
+            if (this.activeVertexBuffers.length <= 1) {
+                this.bindVertexBuffersOneshot();
+            } else {
+                this.bindVertexBuffersMulti();
+            }
+        }
+
+        private void bindVertexBuffersOneshot() {
+            for (int bufferIndex = 0; bufferIndex < this.activeVertexBuffers.length; bufferIndex++) {
+                this.bindVertexBuffer(bufferIndex, this.activeVertexBuffers[bufferIndex]);
+            }
+        }
+
+        private void bindVertexBuffer(int bufferIndex, VertexArrayBuffer vertexBuffer) {
+            GL45C.glVertexArrayVertexBuffer(this.array.handle(), bufferIndex, vertexBuffer.buffer().handle(), vertexBuffer.offset(), vertexBuffer.stride());
+        }
+
+        private void bindVertexBuffersMulti() {
+            var count = this.activeVertexBuffers.length;
 
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                var buffers = stack.callocInt(slots.length);
-                var offsets = stack.callocPointer(slots.length);
-                var strides = stack.callocInt(slots.length);
+                var buffers = stack.callocInt(count);
+                var offsets = stack.callocPointer(count);
+                var strides = stack.callocInt(count);
 
-                for (int i = 0; i < slots.length; i++) {
-                    var slot = slots[i];
+                for (int i = 0; i < count; i++) {
+                    var binding = this.activeVertexBuffers[i];
 
-                    var buffer = slot.buffer();
-                    var stride = slot.stride();
+                    var buffer = binding.buffer();
+                    var offset = binding.offset();
+                    var stride = binding.stride();
 
                     buffers.put(i, buffer.handle());
-                    offsets.put(i, 0 /* TODO: allow specifying an offset */);
+                    offsets.put(i, offset);
                     strides.put(i, stride);
                 }
 
                 GL45C.glVertexArrayVertexBuffers(this.array.handle(), 0, buffers, offsets, strides);
             }
 
-            this.activeVertexBuffers = bindings;
+            this.vertexBuffersDirty = false;
         }
 
-        @Override
-        public void bindElementBuffer(Buffer buffer) {
-            GL45C.glVertexArrayElementBuffer(this.array.handle(), buffer.handle());
-            this.activeElementBuffer = buffer;
-        }
-
-        @Override
-        public void multiDrawElementsBaseVertex(PointerBuffer pointer, IntBuffer count, IntBuffer baseVertex, IntType indexType, PrimitiveType primitiveType) {
-            this.checkIndexedResources();
-            GL32C.glMultiDrawElementsBaseVertex(primitiveType.getId(), count, indexType.getFormatId(), pointer, baseVertex);
-        }
-
-        @Override
-        public void drawElementsBaseVertex(PrimitiveType primitiveType, IntType elementType, long elementPointer, int baseVertex, int elementCount) {
-            this.checkIndexedResources();
-            GL32C.glDrawElementsBaseVertex(primitiveType.getId(), elementCount, elementType.getFormatId(), elementPointer, baseVertex);
-        }
-
-        private void checkIndexedResources() {
-            Validate.notNull(this.activeVertexBuffers, "Vertex buffers not bound");
-            Validate.notNull(this.activeElementBuffer, "Element buffer not bound");
-        }
-    }
-
-    private static class ImmediateProgramCommandList implements ProgramCommandList {
-        @Override
-        public <A extends Enum<A>> void useVertexArray(VertexArray<A> array, Consumer<VertexArrayCommandList<A>> consumer) {
-            this.useVertexArray0((VertexArrayImpl<A>) array, consumer);
-        }
-
-        private <A extends Enum<A>> void useVertexArray0(VertexArrayImpl<A> array, Consumer<VertexArrayCommandList<A>> consumer) {
-            GL30C.glBindVertexArray(array.handle());
-            consumer.accept(new ImmediateVertexArrayCommandList<>(array));
-        }
-    }
-
-    private static class ImmediatePipelineCommandList implements PipelineCommandList {
-        @Override
-        public <T> void useProgram(Program<T> program, ProgramGate<T> gate) {
-            GL30C.glUseProgram(program.handle());
-            gate.run(new ImmediateProgramCommandList(), program.getInterface());
+        private void bindElementBuffer() {
+            GL45C.glVertexArrayElementBuffer(this.array.handle(), this.activeElementBuffer != null ? this.activeElementBuffer.handle() : 0);
+            this.elementBufferDirty = false;
         }
     }
 }
