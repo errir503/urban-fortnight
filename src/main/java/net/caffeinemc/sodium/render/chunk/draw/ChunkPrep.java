@@ -35,9 +35,13 @@ public class ChunkPrep {
         }
 
         var largestVertexIndex = 0;
+        var reverseOrder = false; // TODO: fix me
 
-        for (var bucket : list.unsorted()) {
-            for (var section : bucket.sections()) {
+        for (var bucketIterator = list.sorted(reverseOrder); bucketIterator.hasNext(); ) {
+            var bucket = bucketIterator.next();
+
+            for (var sectionIterator = bucket.sorted(reverseOrder); sectionIterator.hasNext(); ) {
+                var section = sectionIterator.next();
                 createCommands(section, builders, camera);
             }
 
@@ -54,8 +58,11 @@ public class ChunkPrep {
                 var instanceData = builder.instanceBufferBuilder.flush();
                 var commandData = builder.commandBufferBuilder.flush();
 
+                var vertexBuffers = resources.vertexBuffers;
+
                 builder.batches.add(new ChunkRenderBatch(
-                        resources.vertexBuffers.getBufferObject(),
+                        vertexBuffers.getBufferObject(),
+                        vertexBuffers.getStride(),
                         instanceCount,
                         commandCount,
                         instanceData,
@@ -136,6 +143,7 @@ public class ChunkPrep {
     }
 
     public record ChunkRenderBatch(Buffer vertexBuffer,
+                                   int vertexStride,
                                    int instanceCount,
                                    int commandCount,
                                    BufferSlice instanceData,
