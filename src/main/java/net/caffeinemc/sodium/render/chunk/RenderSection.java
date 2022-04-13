@@ -1,9 +1,8 @@
 package net.caffeinemc.sodium.render.chunk;
 
+import net.caffeinemc.sodium.interop.vanilla.math.frustum.Frustum;
 import net.caffeinemc.sodium.render.chunk.region.RenderRegion;
 import net.caffeinemc.sodium.render.chunk.state.*;
-import net.caffeinemc.sodium.render.texture.SpriteUtil;
-import net.minecraft.client.texture.Sprite;
 import net.minecraft.util.math.ChunkSectionPos;
 
 import java.util.concurrent.CompletableFuture;
@@ -13,8 +12,10 @@ import java.util.concurrent.CompletableFuture;
  * data about the render in the chunk visibility graph.
  */
 public class RenderSection {
-    private final int sectionId;
+    private final int id;
+
     private final long regionKey;
+    private RenderRegion region;
 
     private final int chunkX, chunkY, chunkZ;
     private final float originX, originY, originZ;
@@ -28,8 +29,9 @@ public class RenderSection {
     private boolean disposed;
 
     private int lastAcceptedBuildTime = -1;
+    private int flags;
 
-    public RenderSection(int chunkX, int chunkY, int chunkZ, int sectionId) {
+    public RenderSection(int chunkX, int chunkY, int chunkZ, int id) {
         this.chunkX = chunkX;
         this.chunkY = chunkY;
         this.chunkZ = chunkZ;
@@ -38,7 +40,7 @@ public class RenderSection {
         this.originY = ChunkSectionPos.getBlockCoord(this.chunkY) + 8;
         this.originZ = ChunkSectionPos.getBlockCoord(this.chunkZ) + 8;
 
-        this.sectionId = sectionId;
+        this.id = id;
         this.regionKey = RenderRegion.getRegionCoord(this.chunkX, this.chunkY, this.chunkZ);
     }
 
@@ -75,13 +77,7 @@ public class RenderSection {
         }
 
         this.data = data;
-    }
-
-    /**
-     * @return True if the chunk render contains no data, otherwise false
-     */
-    public boolean isEmpty() {
-        return this.data.isEmpty();
+        this.flags = data.getFlags();
     }
 
     /**
@@ -89,16 +85,6 @@ public class RenderSection {
      */
     public ChunkSectionPos getChunkPos() {
         return ChunkSectionPos.from(this.chunkX, this.chunkY, this.chunkZ);
-    }
-
-    /**
-     * Ensures that all resources attached to the given chunk render are "ticked" forward. This should be called every
-     * time before this render is drawn if {@link ChunkRenderData#isTickable()} is true.
-     */
-    public void tick() {
-        for (Sprite sprite : this.data.getAnimatedSprites()) {
-            SpriteUtil.markSpriteActive(sprite);
-        }
     }
 
     public int getChunkX() {
@@ -114,7 +100,7 @@ public class RenderSection {
     }
 
     public ChunkRenderBounds getBounds() {
-        return this.data.getBounds();
+        return this.data.bounds;
     }
 
     public boolean isDisposed() {
@@ -163,12 +149,15 @@ public class RenderSection {
         if (this.uploadedGeometry != null) {
             this.uploadedGeometry.delete();
             this.uploadedGeometry = null;
+
+            this.region = null;
         }
     }
 
-    public void updateGeometry(UploadedChunkGeometry geometry) {
+    public void updateGeometry(RenderRegion region, UploadedChunkGeometry geometry) {
         this.deleteGeometry();
         this.uploadedGeometry = geometry;
+        this.region = region;
     }
 
     public UploadedChunkGeometry getGeometry() {
@@ -176,7 +165,7 @@ public class RenderSection {
     }
 
     public int id() {
-        return this.sectionId;
+        return this.id;
     }
 
     public float getDistance(float x, float y, float z) {
@@ -196,5 +185,18 @@ public class RenderSection {
 
     public long getRegionKey() {
         return this.regionKey;
+    }
+
+    public RenderRegion getRegion() {
+        return this.region;
+    }
+
+    public boolean isWithinFrustum(Frustum frustum) {
+        return frustum.isBoxVisible(this.originX - 8.0f, this.originY - 8.0f, this.originZ - 8.0f,
+                this.originX + 8.0f, this.originY + 8.0f, this.originZ + 8.0f);
+    }
+
+    public int getFlags() {
+        return this.flags;
     }
 }
