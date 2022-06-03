@@ -21,4 +21,9 @@ public class MixinMinecraftClient {
             fence.sync();
         }
     }
+
+    @Inject(method = "render", at = @At("RETURN"))
+    private void postRender(boolean tick, CallbackInfo ci) {
+        this.fences.enqueue(SodiumClientMod.DEVICE.createFence());
+    }
 }
