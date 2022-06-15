@@ -34,7 +34,7 @@ public class RenderListBuilder {
 
     public RenderListBuilder(RenderDevice device) {
         var maxInFlightFrames = SodiumClientMod.options().advanced.cpuRenderAheadLimit + 1;
-        var uboAlignment = device.properties().uniformBufferOffsetAlignment;
+        var ssboAlignment = device.properties().storageBufferOffsetAlignment;
 
         this.commandBuffer = new StreamingBuffer(
                 device,
@@ -45,8 +45,8 @@ public class RenderListBuilder {
         );
         this.instanceBuffer = new StreamingBuffer(
                 device,
-                device.properties().uniformBufferOffsetAlignment,
-                RenderRegion.REGION_LENGTH * RenderRegion.REGION_HEIGHT * RenderRegion.REGION_WIDTH * uboAlignment, // worst case
+                ssboAlignment,
+                0x80000, // start with 512KiB per section and expand from there if needed (should cover most cases)
                 maxInFlightFrames,
                 MappedBufferFlags.EXPLICIT_FLUSH
         );
@@ -67,12 +67,12 @@ public class RenderListBuilder {
 
         final int totalPasses = DefaultRenderPasses.ALL.length;
 
-        var commandBufferPassSize = commandBufferPassSize(1, chunks);
+        var commandBufferPassSize = commandBufferPassSize(this.commandBuffer.getSectionAlignment(), chunks);
         StreamingBuffer.WritableSection commandBufferSection = this.commandBuffer.getSectionWithSize(frameIndex, (int) commandBufferPassSize * totalPasses, false);
         ByteBuffer commandBufferSectionView = commandBufferSection.getView();
         long commandBufferSectionAddress = MemoryUtil.memAddress0(commandBufferSectionView);
 
-        var instanceBufferPassSize = instanceBufferPassSize(this.instanceBuffer.getAlignment(), chunks);
+        var instanceBufferPassSize = instanceBufferPassSize(this.instanceBuffer.getSectionAlignment(), chunks);
         // shouldn't need to resize instance buffer section, but crashes if not? look into this
         StreamingBuffer.WritableSection instanceBufferSection = this.instanceBuffer.getSectionWithSize(frameIndex, (int) instanceBufferPassSize * totalPasses, false);
         ByteBuffer instanceBufferSectionView = instanceBufferSection.getView();
@@ -165,15 +165,15 @@ public class RenderListBuilder {
                     }
 
                     var commandCurrentPosition = renderList.tempCommandBufferPosition;
-                    var commandSectionLength = commandCount * COMMAND_STRUCT_STRIDE;
-                    var commandSectionStart = commandCurrentPosition - commandSectionLength;
+                    var commandSubsectionLength = commandCount * COMMAND_STRUCT_STRIDE;
+                    var commandSubsectionStart = commandCurrentPosition - commandSubsectionLength;
 
                     var instanceCurrentPosition = renderList.tempInstanceBufferPosition;
-                    var instanceSectionLength = instanceCount * INSTANCE_STRUCT_STRIDE;
-                    var instanceSectionStart = instanceCurrentPosition - instanceSectionLength;
+                    var instanceSubsectionLength = instanceCount * INSTANCE_STRUCT_STRIDE;
+                    var instanceSubsectionStart = instanceCurrentPosition - instanceSubsectionLength;
 
                     // don't need to align command buffer data, only instance data
-                    renderList.tempInstanceBufferPosition = MathUtil.align(instanceCurrentPosition, this.instanceBuffer.getAlignment());
+                    renderList.tempInstanceBufferPosition = MathUtil.align(instanceCurrentPosition, this.instanceBuffer.getSectionAlignment());
 
                     var region = bucket.region();
 
@@ -183,8 +183,9 @@ public class RenderListBuilder {
                                     region.vertexBuffers.getStride(),
                                     instanceCount,
                                     commandCount,
-                                    instanceSectionStart,
-                                    commandSectionStart
+                                    instanceSubsectionStart,
+                                    instanceSubsectionLength,
+                                    commandSubsectionStart
                             )
                     );
                 }
@@ -274,7 +275,9 @@ public class RenderListBuilder {
         private final int vertexStride;
         private final int instanceCount;
         private final int commandCount;
+
         private long instanceBufferOffset;
+        private final long instanceBufferLength;
         private long commandBufferOffset;
 
         public ChunkRenderBatch(Buffer vertexBuffer,
@@ -282,6 +285,7 @@ public class RenderListBuilder {
                                 int instanceCount,
                                 int commandCount,
                                 long instanceBufferOffset,
+                                long instanceBufferLength,
                                 long commandBufferOffset
         ) {
             this.vertexBuffer = vertexBuffer;
@@ -289,6 +293,7 @@ public class RenderListBuilder {
             this.instanceCount = instanceCount;
             this.commandCount = commandCount;
             this.instanceBufferOffset = instanceBufferOffset;
+            this.instanceBufferLength = instanceBufferLength;
             this.commandBufferOffset = commandBufferOffset;
         }
 
@@ -310,6 +315,10 @@ public class RenderListBuilder {
 
         public long getInstanceBufferOffset() {
             return this.instanceBufferOffset;
+        }
+
+        public long getInstanceBufferLength() {
+            return this.instanceBufferLength;
         }
 
         public long getCommandBufferOffset() {
