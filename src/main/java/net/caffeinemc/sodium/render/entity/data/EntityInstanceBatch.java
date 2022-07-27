@@ -2,19 +2,19 @@ package net.caffeinemc.sodium.render.entity.data;
 
 import it.unimi.dsi.fastutil.ints.IntArrays;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import java.nio.ByteBuffer;
+import java.util.List;
 import net.caffeinemc.gfx.api.types.ElementFormat;
+import net.caffeinemc.gfx.util.buffer.streaming.SequenceBuilder;
+import net.caffeinemc.gfx.util.buffer.streaming.StreamingBuffer;
 import net.caffeinemc.sodium.interop.vanilla.math.matrix.Matrix4fExtended;
 import net.caffeinemc.sodium.interop.vanilla.math.matrix.MatrixUtil;
-import net.caffeinemc.sodium.render.buffer.StreamingBuffer;
+import net.caffeinemc.sodium.interop.vanilla.sequence.Blaze3DSequences;
 import net.caffeinemc.sodium.render.entity.compile.BuiltEntityModel;
-import net.caffeinemc.sodium.render.sequence.SequenceBuilder;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.system.MemoryUtil;
-
-import java.nio.ByteBuffer;
-import java.util.List;
 
 public class EntityInstanceBatch {
 
@@ -102,6 +102,8 @@ public class EntityInstanceBatch {
                     }
                 }
 
+                // TODO: update with mathutil version
+                
                 // The translation of the inverse of a transform matrix is the negation of
                 // the transposed rotation times the transform of the original matrix.
                 //
@@ -194,7 +196,7 @@ public class EntityInstanceBatch {
         long pointer = MemoryUtil.memAddress0(section.getView()) + sectionPos;
         long pointerIncrement = (long) drawMode.getIndexCount(drawMode.additionalVertexCount) * this.elementFormat.getSize();
 
-        SequenceBuilder sequenceBuilder = SequenceBuilder.map(drawMode, this.elementFormat);
+        SequenceBuilder sequenceBuilder = Blaze3DSequences.map(drawMode, this.elementFormat);
         int lastIndex = 0;
         for (PerInstanceData instanceData : this.instances) {
             int[] primitiveIndices = instanceData.primitiveIndices();

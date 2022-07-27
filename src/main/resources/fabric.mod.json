@@ -7,6 +7,10 @@
   "authors": [
     "JellySquid"
   ],
+  "contributors": [
+    "burgerdude",
+    "IMS"
+  ],
   "contact": {
     "sources": "https://github.com/CaffeineMC/sodium-fabric",
     "issues": "https://github.com/CaffeineMC/sodium-fabric/issues"
@@ -16,10 +20,10 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "me.jellysquid.mods.sodium.client.SodiumClientMod"
+      "net.caffeinemc.sodium.SodiumClientMod"
     ],
     "preLaunch": [
-      "me.jellysquid.mods.sodium.client.SodiumPreLaunch"
+      "net.caffeinemc.sodium.SodiumPreLaunch"
     ]
   },
   "custom": {

@@ -1,8 +1,8 @@
 {
-  "package": "me.jellysquid.mods.sodium.mixin",
+  "package": "net.caffeinemc.sodium.mixin",
   "required": true,
   "compatibilityLevel": "JAVA_17",
-  "plugin": "me.jellysquid.mods.sodium.mixin.SodiumMixinPlugin",
+  "plugin": "net.caffeinemc.sodium.mixin.SodiumMixinPlugin",
   "injectors": {
     "defaultRequire": 1
   },
@@ -12,6 +12,8 @@
   "client": [
     "core.MixinFrustum",
     "core.MixinMinecraftClient",
+    "core.MixinWindow",
+    "core.MixinRenderSystem",
     "core.matrix.MixinMatrix3f",
     "core.matrix.MixinMatrix4f",
     "core.model.MixinBlockColors",
@@ -30,6 +32,7 @@
     "features.chunk_rendering.MixinClientChunkMap",
     "features.chunk_rendering.MixinClientPlayNetworkHandler",
     "features.chunk_rendering.MixinClientWorld",
+    "features.chunk_rendering.MixinLightmapTextureManager",
     "features.chunk_rendering.MixinPackedIntegerArray",
     "features.chunk_rendering.MixinPalettedContainer",
     "features.chunk_rendering.MixinWorldRenderer",
