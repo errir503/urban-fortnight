@@ -110,43 +110,48 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
             ChunkRenderPass renderPass = chunkRenderPasses[passId];
             Deque<MdbvChunkRenderBatch> renderList = new ArrayDeque<>(128); // just an estimate, should be plenty
             
-            List<LongList> passModelPartSegments = lists.modelPartSegments[passId];
+            IntList passRegionIndices = lists.regionIndices[passId];
             List<IntList> passModelPartCounts = lists.modelPartCounts[passId];
-            // yoink count data from the model part counts list
-            int passRegionCount = passModelPartCounts.size();
+            List<LongList> passModelPartSegments = lists.modelPartSegments[passId];
+            List<IntList> passSectionIndices = lists.sectionIndices[passId];
+            int passRegionCount = passRegionIndices.size();
     
             boolean reverseOrder = renderPass.isTranslucent();
             
             int regionIdx = reverseOrder ? passRegionCount - 1 : 0;
             while (reverseOrder ? (regionIdx >= 0) : (regionIdx < passRegionCount)) {
-                IntList regionModelPartCounts = passModelPartCounts.get(regionIdx);
-                LongList regionModelPartSegments = passModelPartSegments.get(regionIdx);
-                RenderRegion region = lists.regions.get(regionIdx);
-                IntList regionSectionCoords = lists.sectionCoords.get(regionIdx);
-                LongList regionUploadedSegments = lists.uploadedSegments.get(regionIdx);
-                // yoink count data from the model part counts list because it doesn't scale the sizes, and it takes
-                // into account the current pass
-                int regionSectionCount = regionModelPartSegments.size();
+                IntList regionPassModelPartCounts = passModelPartCounts.get(regionIdx);
+                LongList regionPassModelPartSegments = passModelPartSegments.get(regionIdx);
+                IntList regionPassSectionIndices = passSectionIndices.get(regionIdx);
+    
+                int fullRegionIdx = passRegionIndices.getInt(regionIdx);
+                RenderRegion region = lists.regions.get(fullRegionIdx);
+                IntList regionSectionCoords = lists.sectionCoords.get(fullRegionIdx);
+                LongList regionUploadedSegments = lists.uploadedSegments.get(fullRegionIdx);
                 
-                // don't use regionIdx past here
+                int regionPassSectionCount = regionPassSectionIndices.size();
+                
+                // don't use regionIdx or fullRegionIdx past here
                 if (reverseOrder) {
                     regionIdx--;
                 } else {
                     regionIdx++;
                 }
                 
-                int modelPartIdx = 0;
-                int sectionIdx = reverseOrder ? regionSectionCount - 1 : 0;
-                while (reverseOrder ? (sectionIdx >= 0) : (sectionIdx < regionSectionCount)) {
-                    int sectionModelPartCount = regionModelPartCounts.getInt(sectionIdx);
-                    long sectionUploadedSegment = regionUploadedSegments.getLong(sectionIdx);
+                int regionPassModelPartIdx = reverseOrder ? regionPassModelPartSegments.size() - 1 : 0;
+                int regionPassModelPartCount = 0;
+                int sectionIdx = reverseOrder ? regionPassSectionCount - 1 : 0;
+                while (reverseOrder ? (sectionIdx >= 0) : (sectionIdx < regionPassSectionCount)) {
+                    int sectionModelPartCount = regionPassModelPartCounts.getInt(sectionIdx);
                     
-                    int sectionCoordsIdx = sectionIdx * 3;
+                    int fullSectionIdx = regionPassSectionIndices.getInt(sectionIdx);
+                    long sectionUploadedSegment = regionUploadedSegments.getLong(fullSectionIdx);
+    
+                    int sectionCoordsIdx = fullSectionIdx * 3;
                     int sectionCoordX = regionSectionCoords.getInt(sectionCoordsIdx);
                     int sectionCoordY = regionSectionCoords.getInt(sectionCoordsIdx + 1);
                     int sectionCoordZ = regionSectionCoords.getInt(sectionCoordsIdx + 2);
-    
-                    // don't use sectionIdx past here
+                    // don't use fullSectionIdx or sectionIdx past here
                     if (reverseOrder) {
                         sectionIdx--;
                     } else {
@@ -173,7 +178,14 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
                     );
                     
                     for (int i = 0; i < sectionModelPartCount; i++) {
-                        long modelPartSegment = regionModelPartSegments.getLong(modelPartIdx + i);
+                        long modelPartSegment = regionPassModelPartSegments.getLong(regionPassModelPartIdx);
+    
+                        // don't use regionPassModelPartIdx past here (in this loop)
+                        if (reverseOrder) {
+                            regionPassModelPartIdx--;
+                        } else {
+                            regionPassModelPartIdx++;
+                        }
                         
                         // go from vertex count -> index count
                         MemoryUtil.memPutInt(this.indexCountsBufferPtr + indexCountsBufferPosition, 6 * (BufferSegment.getLength(modelPartSegment) >> 2));
@@ -188,13 +200,12 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
                         transformsBufferPosition += TRANSFORM_STRUCT_STRIDE;
                     }
                     
-                    modelPartIdx += sectionModelPartCount;
+                    regionPassModelPartCount += sectionModelPartCount;
                 
                     largestVertexIndex = Math.max(largestVertexIndex, BufferSegment.getLength(sectionUploadedSegment));
                 }
-            
-                // we have a transform for every model part, so just use the command count
-                int transformsSubsectionLength = modelPartIdx * TRANSFORM_STRUCT_STRIDE;
+                
+                int transformsSubsectionLength = regionPassModelPartCount * TRANSFORM_STRUCT_STRIDE;
                 long transformSubsectionStart = transformsBufferSection.getDeviceOffset()
                                                 + transformsBufferPosition - transformsSubsectionLength;
                 transformsBufferPosition = MathUtil.align(
@@ -202,18 +213,18 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
                         this.uniformBufferChunkTransforms.getAlignment()
                 );
                 
-                int indexCountsSubsectionLength = modelPartIdx * Integer.BYTES;
+                int indexCountsSubsectionLength = regionPassModelPartCount * Integer.BYTES;
                 long indexCountsSubsectionStart = this.indexCountsBufferPtr + indexCountsBufferPosition
                                                   - indexCountsSubsectionLength;
     
-                int baseVerticesSubsectionLength = modelPartIdx * Integer.BYTES;
+                int baseVerticesSubsectionLength = regionPassModelPartCount * Integer.BYTES;
                 long baseVerticesSubsectionStart = this.baseVerticesBufferPtr + baseVerticesBufferPosition
                                                   - baseVerticesSubsectionLength;
             
                 renderList.add(new MdbvChunkRenderBatch(
                         region.getVertexBuffer().getBufferObject(),
                         region.getVertexBuffer().getStride(),
-                        modelPartIdx,
+                        regionPassModelPartCount,
                         transformSubsectionStart,
                         indexCountsSubsectionStart,
                         this.indexOffsetsBufferPtr,
@@ -221,9 +232,7 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
                 ));
             }
     
-            if (!renderList.isEmpty()) {
-                renderLists[passId] = renderList;
-            }
+            renderLists[passId] = renderList;
         }
         
         transformsBufferSectionView.position(transformsBufferPosition);
@@ -268,10 +277,10 @@ public class MdbvChunkRenderer extends AbstractMdChunkRenderer<MdbvChunkRenderer
         }
     }
     
-    protected static int unindexedTransformsBufferSize(int alignment, SortedTerrainLists list) {
+    protected static int unindexedTransformsBufferSize(int alignment, SortedTerrainLists lists) {
         int size = 0;
         
-        for (List<LongList> passModelPartSegments : list.modelPartSegments) {
+        for (List<LongList> passModelPartSegments : lists.modelPartSegments) {
             for (LongList regionModelPartSegments : passModelPartSegments) {
                 size = MathUtil.align(size + (regionModelPartSegments.size() * TRANSFORM_STRUCT_STRIDE), alignment);
             }
