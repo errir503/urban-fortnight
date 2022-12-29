@@ -41,7 +41,7 @@ public abstract class AbstractWidget implements Drawable, Element, Selectable {
     }
 
     protected void drawQuads(Consumer<VertexConsumer> consumer) {
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
 
         RenderSystem.enableBlend();
         RenderSystem.disableTexture();
@@ -52,9 +52,9 @@ public abstract class AbstractWidget implements Drawable, Element, Selectable {
 
         consumer.accept(bufferBuilder);
 
-        bufferBuilder.end();
+        BufferBuilder.BuiltBuffer output = bufferBuilder.end();
 
-        BufferRenderer.draw(bufferBuilder);
+        BufferRenderer.drawWithGlobalProgram(output);
         RenderSystem.enableTexture();
         RenderSystem.disableBlend();
     }
@@ -68,7 +68,7 @@ public abstract class AbstractWidget implements Drawable, Element, Selectable {
 
     protected void playClickSound() {
         MinecraftClient.getInstance().getSoundManager()
-                .play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+                .play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK.value(), 1.0F));
     }
 
     protected int getStringWidth(String text) {

@@ -1,8 +1,8 @@
 {
-  "package": "net.caffeinemc.sodium.mixin",
+  "package": "me.jellysquid.mods.sodium.mixin",
   "required": true,
   "compatibilityLevel": "JAVA_17",
-  "plugin": "net.caffeinemc.sodium.mixin.SodiumMixinPlugin",
+  "plugin": "me.jellysquid.mods.sodium.mixin.SodiumMixinPlugin",
   "injectors": {
     "defaultRequire": 1
   },
@@ -11,10 +11,7 @@
   },
   "client": [
     "core.MixinFrustum",
-    "core.MixinWindow",
-    "core.MixinRenderSystem",
-    "core.matrix.MixinMatrix3f",
-    "core.matrix.MixinMatrix4f",
+    "core.MixinMinecraftClient",
     "core.model.MixinBlockColors",
     "core.model.MixinItemColors",
     "core.pipeline.MixinBakedQuad",
@@ -31,7 +28,6 @@
     "features.chunk_rendering.MixinClientChunkMap",
     "features.chunk_rendering.MixinClientPlayNetworkHandler",
     "features.chunk_rendering.MixinClientWorld",
-    "features.chunk_rendering.MixinLightmapTextureManager",
     "features.chunk_rendering.MixinPackedIntegerArray",
     "features.chunk_rendering.MixinPalettedContainer",
     "features.chunk_rendering.MixinWorldRenderer",
@@ -45,10 +41,10 @@
     "features.gui.fast_loading_screen.MixinLevelLoadingScreen",
     "features.gui.font.MixinGlyphRenderer",
     "features.item.MixinItemRenderer",
-    "features.matrix_stack.MixinMatrixStack",
     "features.matrix_stack.MixinVertexConsumer",
     "features.model.MixinMultipartBakedModel",
     "features.model.MixinWeightedBakedModel",
+    "features.optimized_bamboo.MixinBambooBlock",
     "features.options.MixinInGameHud",
     "features.options.MixinOptionsScreen",
     "features.options.MixinWorldRenderer",
@@ -57,10 +53,16 @@
     "features.render_layer.leaves.MixinLeavesBlock",
     "features.render_layer.leaves.MixinRenderLayers",
     "features.sky.MixinWorldRenderer",
-    "features.texture_tracking.MixinSprite",
-    "features.texture_tracking.MixinSpriteAnimation",
+    "features.texture_tracking.MixinSpriteContents",
+    "features.texture_tracking.MixinSpriteContentsAnimatorImpl",
     "features.texture_tracking.MixinSpriteAtlasTexture",
     "features.texture_tracking.MixinSpriteBillboardParticle",
-    "features.texture_updates.MixinSpriteInterpolated"
+    "features.texture_updates.MixinSpriteInterpolated",
+    "features.texture_updates.AnimationAccessor",
+    "features.texture_updates.AnimationFrameAccessor",
+    "features.texture_updates.SpriteInfoAnimationAccessor",
+    "features.texture_updates.SpriteInfoAccessor",
+    "features.clouds.MixinWorldRenderer",
+    "workarounds.nvidia.MixinMinecraftClient"
   ]
 }

@@ -1,11 +1,13 @@
 package me.jellysquid.mods.sodium.client;
 
 import me.jellysquid.mods.sodium.client.gui.SodiumGameOptions;
+import me.jellysquid.mods.sodium.client.util.FlawlessFrames;
+import me.jellysquid.mods.sodium.client.util.workarounds.DriverWorkarounds;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
@@ -25,8 +27,10 @@ public class SodiumClientMod implements ClientModInitializer {
                 .getVersion()
                 .getFriendlyString();
 
-        LOGGER = LogManager.getLogger("Sodium");
+        LOGGER = LoggerFactory.getLogger("Sodium");
         CONFIG = loadConfig();
+
+        FlawlessFrames.onClientInitialization();
     }
 
     public static SodiumGameOptions options() {

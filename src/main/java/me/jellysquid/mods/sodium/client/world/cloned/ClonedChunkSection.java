@@ -10,11 +10,15 @@ import net.fabricmc.fabric.api.rendering.data.v1.RenderAttachmentBlockEntity;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.registry.BuiltinRegistries;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.collection.PackedIntegerArray;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.util.registry.BuiltinRegistries;
+import net.minecraft.registry.Registry;
 import net.minecraft.world.LightType;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
@@ -26,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ClonedChunkSection {
     private static final LightType[] LIGHT_TYPES = LightType.values();
-    private static final ChunkSection EMPTY_SECTION = new ChunkSection(0, BuiltinRegistries.BIOME);
+    private ChunkSection EMPTY_SECTION;
 
     private final AtomicInteger referenceCount = new AtomicInteger(0);
     private final ClonedChunkSectionCache backingCache;
@@ -41,7 +45,7 @@ public class ClonedChunkSection {
     private PackedIntegerArray blockStateData;
     private ClonedPalette<BlockState> blockStatePalette;
 
-    private PalettedContainer<Biome> biomeData;
+    private ReadableContainer<RegistryEntry<Biome>> biomeData;
 
     ClonedChunkSection(ClonedChunkSectionCache backingCache) {
         this.backingCache = backingCache;
@@ -51,6 +55,8 @@ public class ClonedChunkSection {
     }
 
     public void init(World world, ChunkSectionPos pos) {
+        EMPTY_SECTION =  new ChunkSection(0, world.getRegistryManager().get(RegistryKeys.BIOME));
+
         WorldChunk chunk = world.getChunk(pos.getX(), pos.getZ());
 
         if (chunk == null) {
@@ -59,7 +65,7 @@ public class ClonedChunkSection {
 
         ChunkSection section = getChunkSection(world, chunk, pos);
 
-        if (section == null || section.isEmpty()) {
+        if (section == null) {
             section = EMPTY_SECTION;
         }
 
@@ -138,7 +144,7 @@ public class ClonedChunkSection {
         }
     }
 
-    public Biome getBiome(int x, int y, int z) {
+    public RegistryEntry<Biome> getBiome(int x, int y, int z) {
         return this.biomeData.get(x, y, z);
     }
 

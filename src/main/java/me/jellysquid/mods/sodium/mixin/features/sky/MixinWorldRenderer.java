@@ -1,5 +1,6 @@
 package me.jellysquid.mods.sodium.mixin.features.sky;
 
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -16,7 +17,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Matrix4f;
+
 import net.minecraft.util.math.Vec3d;
 
 @Mixin(WorldRenderer.class)
@@ -40,21 +41,16 @@ public class MixinWorldRenderer {
      * outside of water, so the fog should also be covering the sun and sky.</p>
      * 
      * <p>When updating Sodium to new releases of the game, please check for new
-     * ways the fog can be reduced in {@link BackgroundRenderer#applyFog()}.</p>
+     * ways the fog can be reduced in {@link BackgroundRenderer#applyFog(Camera, BackgroundRenderer.FogType, float, boolean, float)} ()}.</p>
      */
-    @Inject(method = "renderSky(Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/util/math/Matrix4f;FLjava/lang/Runnable;)V", at = @At("HEAD"), cancellable = true)
-    private void preRenderSky(MatrixStack matrices, Matrix4f matrix4f, float tickDelta, Runnable runnable, CallbackInfo callbackInfo) {
-        Camera camera = this.client.gameRenderer.getCamera();
-        Vec3d cameraPosition = camera.getPos();
-        Entity cameraEntity = camera.getFocusedEntity();
-
-        boolean isSubmersed = camera.getSubmersionType() != CameraSubmersionType.NONE;
-        boolean hasBlindness = cameraEntity instanceof LivingEntity entity && entity.hasStatusEffect(StatusEffects.BLINDNESS);
-        boolean useThickFog = this.client.world.getDimensionEffects().useThickFog(MathHelper.floor(cameraPosition.getX()),
-                MathHelper.floor(cameraPosition.getY())) || this.client.inGameHud.getBossBarHud().shouldThickenFog();
-
-        if (isSubmersed || hasBlindness || useThickFog) {
-            callbackInfo.cancel();
+    @Inject(method = "renderSky(Lnet/minecraft/client/util/math/MatrixStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/render/Camera;ZLjava/lang/Runnable;)V", at = @At("HEAD"), cancellable = true)
+    private void preRenderSky(MatrixStack matrices, Matrix4f projectionMatrix, float tickDelta, Camera camera, boolean bl, Runnable runnable, CallbackInfo ci) {
+        // Cancels sky rendering when the camera is submersed underwater.
+        // This prevents the sky from being visible through chunks culled by Sodium's fog occlusion.
+        // Fixes https://bugs.mojang.com/browse/MC-152504.
+        // Credit to bytzo for noticing the change in 1.18.2.
+        if (camera.getSubmersionType() == CameraSubmersionType.WATER) {
+            ci.cancel();
         }
     }
 }

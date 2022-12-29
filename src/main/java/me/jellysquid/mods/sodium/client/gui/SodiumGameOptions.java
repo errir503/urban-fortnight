@@ -6,9 +6,7 @@ import com.google.gson.GsonBuilder;
 import me.jellysquid.mods.sodium.client.gui.options.TextProvider;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.option.GraphicsMode;
-import net.minecraft.text.LiteralText;
 import net.minecraft.text.Text;
-import net.minecraft.text.TranslatableText;
 
 import java.io.FileReader;
 import java.io.IOException;
@@ -24,6 +22,7 @@ public class SodiumGameOptions {
     public final AdvancedSettings advanced = new AdvancedSettings();
     public final PerformanceSettings performance = new PerformanceSettings();
     public final NotificationSettings notifications = new NotificationSettings();
+    public final WorkaroundSettings workarounds = new WorkaroundSettings();
 
     private boolean readOnly;
 
@@ -69,6 +68,11 @@ public class SodiumGameOptions {
         public boolean hideDonationButton = false;
     }
 
+    public static class WorkaroundSettings {
+        // https://github.com/CaffeineMC/sodium-fabric/issues/1486
+        public boolean issue1486_hideWindowTitleToEvadeNvidiaDrivers;
+    }
+
     public enum ArenaMemoryAllocator implements TextProvider {
         ASYNC("sodium.options.chunk_memory_allocator.async"),
         SWAP("sodium.options.chunk_memory_allocator.swap");
@@ -76,7 +80,7 @@ public class SodiumGameOptions {
         private final Text name;
 
         ArenaMemoryAllocator(String name) {
-            this.name = new TranslatableText(name);
+            this.name = Text.translatable(name);
         }
 
         @Override
@@ -86,14 +90,14 @@ public class SodiumGameOptions {
     }
 
     public enum GraphicsQuality implements TextProvider {
-        DEFAULT("generator.default"),
+        DEFAULT("options.gamma.default"),
         FANCY("options.clouds.fancy"),
         FAST("options.clouds.fast");
 
         private final Text name;
 
         GraphicsQuality(String name) {
-            this.name = new TranslatableText(name);
+            this.name = Text.translatable(name);
         }
 
         @Override
