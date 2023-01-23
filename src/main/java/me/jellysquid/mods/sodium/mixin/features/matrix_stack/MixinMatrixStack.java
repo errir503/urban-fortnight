@@ -1,47 +1,57 @@
 package me.jellysquid.mods.sodium.mixin.features.matrix_stack;
 
-import me.jellysquid.mods.sodium.client.util.math.Matrix3fExtended;
-import me.jellysquid.mods.sodium.client.util.math.Matrix4fExtended;
-import me.jellysquid.mods.sodium.client.util.math.MatrixUtil;
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.Quaternion;
+import org.joml.Matrix3f;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.ArrayDeque;
 import java.util.Deque;
 
 @Mixin(MatrixStack.class)
-public class MixinMatrixStack {
+public abstract class MixinMatrixStack {
     @Shadow
     @Final
     private Deque<MatrixStack.Entry> stack;
 
+    private final Deque<MatrixStack.Entry> cache = new ArrayDeque<>();
+
+
     /**
-     * @reason Use our faster specialized function
      * @author JellySquid
+     * @reason Re-use entries when possible
      */
     @Overwrite
-    public void translate(double x, double y, double z) {
-        MatrixStack.Entry entry = this.stack.getLast();
+    public void push() {
+        var prev = this.stack.getLast();
 
-        Matrix4fExtended mat = MatrixUtil.getExtendedMatrix(entry.getPositionMatrix());
-        mat.translate((float) x, (float) y, (float) z);
+        MatrixStack.Entry entry;
+
+        if (!this.cache.isEmpty()) {
+            entry = this.cache.removeLast();
+            entry.getPositionMatrix()
+                    .set(prev.getPositionMatrix());
+            entry.getNormalMatrix()
+                    .set(prev.getNormalMatrix());
+        } else {
+            entry = new MatrixStack.Entry(new Matrix4f(prev.getPositionMatrix()), new Matrix3f(prev.getNormalMatrix()));
+        }
+
+        this.stack.addLast(entry);
     }
 
     /**
-     * @reason Use our faster specialized function
      * @author JellySquid
+     * @reason Re-use entries when possible
      */
     @Overwrite
-    public void multiply(Quaternion q) {
-        MatrixStack.Entry entry = this.stack.getLast();
-
-        Matrix4fExtended mat4 = MatrixUtil.getExtendedMatrix(entry.getPositionMatrix());
-        mat4.rotate(q);
-
-        Matrix3fExtended mat3 = MatrixUtil.getExtendedMatrix(entry.getNormalMatrix());
-        mat3.rotate(q);
+    public void pop() {
+        this.cache.addLast(this.stack.removeLast());
     }
 }

@@ -1,22 +1,41 @@
+
 package me.jellysquid.mods.sodium.mixin.features.buffer_builder.fast_sort;
 
-import com.google.common.primitives.Floats;
+import me.jellysquid.mods.sodium.client.util.GeometrySort;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.VertexFormat;
-import org.lwjgl.system.MemoryStack;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3f;
+import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 
 import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
-import java.util.Arrays;
-import java.util.BitSet;
 
 @Mixin(BufferBuilder.class)
-public class MixinBufferBuilder {
+public abstract class MixinBufferBuilder {
     @Shadow
     private ByteBuffer buffer;
+
+    @Shadow
+    private VertexFormat.DrawMode drawMode;
+
+    @Shadow
+    private int elementOffset;
+
+    @Shadow
+    private float sortingCameraX;
+
+    @Shadow
+    private float sortingCameraY;
+
+    @Shadow
+    private float sortingCameraZ;
+
+    @Shadow
+    @Nullable
+    private Vector3f[] sortingPrimitiveCenters;
 
     @Shadow
     private int vertexCount;
@@ -24,157 +43,106 @@ public class MixinBufferBuilder {
     @Shadow
     private VertexFormat format;
 
-    @Shadow
-    private int buildStart;
-
     /**
-     * @reason Reduce allocations, use stack allocations, avoid unnecessary math and pointer bumping, inline comparators
      * @author JellySquid
+     * @reason Avoid slow memory accesses
      */
     @Overwrite
-    public void sortQuads(float cameraX, float cameraY, float cameraZ) {
-        this.buffer.clear();
-        FloatBuffer floatBuffer = this.buffer.asFloatBuffer();
+    private Vector3f[] buildPrimitiveCenters() {
+        int primitiveCount = this.vertexCount / this.drawMode.additionalVertexCount;
 
-        int vertexStride = this.format.getVertexSize();
-        int quadStride = this.format.getVertexSizeInteger() * 4;
+        Vector3f[] centers = new Vector3f[primitiveCount];
+        long start = MemoryUtil.memAddress(this.buffer, this.elementOffset);
 
-        int quadStart = this.buildStart / 4;
-        int quadCount = this.vertexCount / 4;
-        int vertexSizeInteger = this.format.getVertexSizeInteger();
+        long vertexStride = this.format.getVertexSizeByte();
+        long primitiveStride = vertexStride * this.drawMode.additionalVertexCount;
 
-        float[] distanceArray = new float[quadCount];
-        int[] indicesArray = new int[quadCount];
+        for (int index = 0; index < primitiveCount; ++index) {
+            long c1 = start + (index * primitiveStride);
+            long c2 = c1 + (vertexStride * 2);
 
-        for (int quadIdx = 0; quadIdx < quadCount; ++quadIdx) {
-            distanceArray[quadIdx] = getDistanceSq(floatBuffer, cameraX, cameraY, cameraZ, vertexSizeInteger, quadStart + (quadIdx * vertexStride));
-            indicesArray[quadIdx] = quadIdx;
+            float x1 = MemoryUtil.memGetFloat(c1);
+            float y1 = MemoryUtil.memGetFloat(c1 + 4);
+            float z1 = MemoryUtil.memGetFloat(c1 + 8);
+
+            float x2 = MemoryUtil.memGetFloat(c2);
+            float y2 = MemoryUtil.memGetFloat(c2 + 4);
+            float z2 = MemoryUtil.memGetFloat(c2 + 8);
+
+            centers[index] = new Vector3f((x1 + x2) * 0.5F, (y1 + y2) * 0.5F, (z1 + z2) * 0.5F);
         }
 
-        mergeSort(indicesArray, distanceArray);
-
-        BitSet bits = new BitSet();
-
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            FloatBuffer tmp = stack.mallocFloat(vertexSizeInteger * 4);
-
-            for (int l = bits.nextClearBit(0); l < indicesArray.length; l = bits.nextClearBit(l + 1)) {
-                int m = indicesArray[l];
-
-                if (m != l) {
-                    sliceQuad(floatBuffer, m, quadStride, quadStart);
-                    tmp.clear();
-                    tmp.put(floatBuffer);
-
-                    int n = m;
-
-                    for (int o = indicesArray[m]; n != l; o = indicesArray[o]) {
-                        sliceQuad(floatBuffer, o, quadStride, quadStart);
-                        FloatBuffer floatBuffer3 = floatBuffer.slice();
-
-                        sliceQuad(floatBuffer, n, quadStride, quadStart);
-                        floatBuffer.put(floatBuffer3);
-
-                        bits.set(n);
-                        n = o;
-                    }
-
-                    sliceQuad(floatBuffer, l, quadStride, quadStart);
-                    tmp.flip();
-
-                    floatBuffer.put(tmp);
-                }
-
-                bits.set(l);
-            }
-        }
+        return centers;
     }
 
-    private static void mergeSort(int[] indicesArray, float[] distanceArray) {
-        mergeSort(indicesArray, 0, indicesArray.length, distanceArray, Arrays.copyOf(indicesArray, indicesArray.length));
-    }
+    /**
+     * @author JellySquid
+     * @reason Use direct memory access, avoid indirection
+     */
+    @Overwrite
+    private void writeSortedIndices(VertexFormat.IndexType indexType) {
+        float[] distance = new float[this.sortingPrimitiveCenters.length];
+        int[] indices = new int[this.sortingPrimitiveCenters.length];
 
-    private static void sliceQuad(FloatBuffer floatBuffer, int quadIdx, int quadStride, int quadStart) {
-        int base = quadStart + (quadIdx * quadStride);
+        for(int i = 0; i < this.sortingPrimitiveCenters.length; ) {
+            Vector3f pos = this.sortingPrimitiveCenters[i];
 
-        floatBuffer.limit(base + quadStride);
-        floatBuffer.position(base);
-    }
+            float x = pos.x() - this.sortingCameraX;
+            float y = pos.y() - this.sortingCameraY;
+            float z = pos.z() - this.sortingCameraZ;
 
-    private static float getDistanceSq(FloatBuffer buffer, float xCenter, float yCenter, float zCenter, int stride, int start) {
-        int vertexBase = start;
-        float x1 = buffer.get(vertexBase);
-        float y1 = buffer.get(vertexBase + 1);
-        float z1 = buffer.get(vertexBase + 2);
-
-        vertexBase += stride;
-        float x2 = buffer.get(vertexBase);
-        float y2 = buffer.get(vertexBase + 1);
-        float z2 = buffer.get(vertexBase + 2);
-
-        vertexBase += stride;
-        float x3 = buffer.get(vertexBase);
-        float y3 = buffer.get(vertexBase + 1);
-        float z3 = buffer.get(vertexBase + 2);
-
-        vertexBase += stride;
-        float x4 = buffer.get(vertexBase);
-        float y4 = buffer.get(vertexBase + 1);
-        float z4 = buffer.get(vertexBase + 2);
-
-        float xDist = ((x1 + x2 + x3 + x4) * 0.25F) - xCenter;
-        float yDist = ((y1 + y2 + y3 + y4) * 0.25F) - yCenter;
-        float zDist = ((z1 + z2 + z3 + z4) * 0.25F) - zCenter;
-
-        return (xDist * xDist) + (yDist * yDist) + (zDist * zDist);
-    }
-
-    private static void mergeSort(final int[] a, final int from, final int to, float[] dist, final int[] supp) {
-        int len = to - from;
-
-        // Insertion sort on smallest arrays
-        if (len < 16) {
-            insertionSort(a, from, to, dist);
-            return;
+            distance[i] = (x * x) + (y * y) + (z * z);
+            indices[i] = i++;
         }
 
-        // Recursively sort halves of a into supp
-        final int mid = (from + to) >>> 1;
-        mergeSort(supp, from, mid, dist, a);
-        mergeSort(supp, mid, to, dist, a);
+        GeometrySort.mergeSort(indices, distance);
 
-        // If list is already sorted, just copy from supp to a. This is an
-        // optimization that results in faster sorts for nearly ordered lists.
-        if (Floats.compare(dist[supp[mid]], dist[supp[mid - 1]]) <= 0) {
-            System.arraycopy(supp, from, a, from, len);
-            return;
-        }
+        long ptr = MemoryUtil.memAddress(this.buffer, this.elementOffset);
+        int verticesPerPrimitive = this.drawMode.additionalVertexCount;
 
-        // Merge sorted halves (now in supp) into a
-        for (int i = from, p = from, q = mid; i < to; i++) {
-            if (q >= to || p < mid && Floats.compare(dist[supp[q]], dist[supp[p]]) <= 0) {
-                a[i] = supp[p++];
-            } else {
-                a[i] = supp[q++];
-            }
-        }
-    }
+        switch (indexType) {
+            case BYTE -> {
+                for (int index : indices) {
+                    int start = index * verticesPerPrimitive;
 
-    private static void insertionSort(final int[] a, final int from, final int to, final float[] dist) {
-        for (int i = from; ++i < to; ) {
-            int t = a[i];
-            int j = i;
+                    MemoryUtil.memPutByte(ptr + 0, (byte) (start + 0));
+                    MemoryUtil.memPutByte(ptr + 1, (byte) (start + 1));
+                    MemoryUtil.memPutByte(ptr + 2, (byte) (start + 2));
+                    MemoryUtil.memPutByte(ptr + 3, (byte) (start + 2));
+                    MemoryUtil.memPutByte(ptr + 4, (byte) (start + 3));
+                    MemoryUtil.memPutByte(ptr + 5, (byte) (start + 0));
 
-            for (int u = a[j - 1]; Floats.compare(dist[u], dist[t]) < 0; u = a[--j - 1]) {
-                a[j] = u;
-                if (from == j - 1) {
-                    --j;
-                    break;
+                    ptr += 6;
                 }
             }
+            case SHORT -> {
+                for (int index : indices) {
+                    int start = index * verticesPerPrimitive;
 
-            a[j] = t;
+                    MemoryUtil.memPutShort(ptr + 0, (short) (start + 0));
+                    MemoryUtil.memPutShort(ptr + 2, (short) (start + 1));
+                    MemoryUtil.memPutShort(ptr + 4, (short) (start + 2));
+                    MemoryUtil.memPutShort(ptr + 6, (short) (start + 2));
+                    MemoryUtil.memPutShort(ptr + 8, (short) (start + 3));
+                    MemoryUtil.memPutShort(ptr + 10, (short) (start + 0));
+
+                    ptr += 12;
+                }
+            }
+            case INT -> {
+                for (int index : indices) {
+                    int start = index * verticesPerPrimitive;
+
+                    MemoryUtil.memPutInt(ptr + 0, start + 0);
+                    MemoryUtil.memPutInt(ptr + 4, start + 1);
+                    MemoryUtil.memPutInt(ptr + 8, start + 2);
+                    MemoryUtil.memPutInt(ptr + 12, start + 2);
+                    MemoryUtil.memPutInt(ptr + 16, start + 3);
+                    MemoryUtil.memPutInt(ptr + 20, start + 0);
+
+                    ptr += 24;
+                }
+            }
         }
     }
-
 }
