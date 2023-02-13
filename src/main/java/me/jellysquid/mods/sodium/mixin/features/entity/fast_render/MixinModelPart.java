@@ -1,16 +1,19 @@
 package me.jellysquid.mods.sodium.mixin.features.entity.fast_render;
 
 import me.jellysquid.mods.sodium.client.model.ModelCuboidAccessor;
-import me.jellysquid.mods.sodium.client.render.ModelCuboid;
-import me.jellysquid.mods.sodium.client.render.vertex.VertexBufferWriter;
-import me.jellysquid.mods.sodium.client.render.vertex.formats.ModelVertex;
-import me.jellysquid.mods.sodium.client.util.color.ColorABGR;
+import net.caffeinemc.mods.sodium.api.render.immediate.RenderImmediate;
+import me.jellysquid.mods.sodium.client.render.immediate.model.ModelCuboid;
+import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
+import net.caffeinemc.mods.sodium.api.vertex.format.common.ModelVertex;
+import net.caffeinemc.mods.sodium.api.util.ColorABGR;
+import net.caffeinemc.mods.sodium.api.math.MatrixHelper;
 import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.system.MemoryStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -20,6 +23,18 @@ import java.util.Map;
 
 @Mixin(ModelPart.class)
 public class MixinModelPart {
+    @Shadow public float pivotX;
+    @Shadow public float pivotY;
+    @Shadow public float pivotZ;
+
+    @Shadow public float yaw;
+    @Shadow public float pitch;
+    @Shadow public float roll;
+
+    @Shadow public float xScale;
+    @Shadow public float yScale;
+    @Shadow public float zScale;
+
     private ModelCuboid[] sodium$cuboids;
 
     @Inject(method = "<init>", at = @At("RETURN"))
@@ -46,8 +61,8 @@ public class MixinModelPart {
         for (ModelCuboid cuboid : this.sodium$cuboids) {
             cuboid.updateVertices(matrices.getPositionMatrix());
 
-            try (MemoryStack stack = VertexBufferWriter.STACK.push()) {
-                long buffer = writer.buffer(stack, 4 * 6, ModelVertex.STRIDE, ModelVertex.FORMAT);
+            try (MemoryStack stack = RenderImmediate.VERTEX_DATA.push()) {
+                long buffer = stack.nmalloc(4 * 6 * ModelVertex.STRIDE);
                 long ptr = buffer;
 
                 for (ModelCuboid.Quad quad : cuboid.quads) {
@@ -57,14 +72,31 @@ public class MixinModelPart {
                         var pos = quad.positions[i];
                         var tex = quad.textures[i];
 
-                        ModelVertex.write(ptr, pos.x, pos.y, pos.z, color, tex.x, tex.y, light, overlay, normal);
+                        ModelVertex.write(ptr, pos.x, pos.y, pos.z, color, tex.x, tex.y, overlay, light, normal);
 
                         ptr += ModelVertex.STRIDE;
                     }
                 }
 
-                writer.push(buffer, 4 * 6, ModelVertex.STRIDE, ModelVertex.FORMAT);
+                writer.push(stack, buffer, 4 * 6, ModelVertex.FORMAT);
             }
+        }
+    }
+
+    /**
+     * @author JellySquid
+     * @reason Apply transform more quickly
+     */
+    @Overwrite
+    public void rotate(MatrixStack matrices) {
+        matrices.translate(this.pivotX * (1.0F / 16.0F), this.pivotY * (1.0F / 16.0F), this.pivotZ * (1.0F / 16.0F));
+
+        if (this.pitch != 0.0F || this.yaw != 0.0F || this.roll != 0.0F) {
+            MatrixHelper.rotateZYX(matrices.peek(), this.roll, this.yaw, this.pitch);
+        }
+
+        if (this.xScale != 1.0F || this.yScale != 1.0F || this.zScale != 1.0F) {
+            matrices.scale(this.xScale, this.yScale, this.zScale);
         }
     }
 }

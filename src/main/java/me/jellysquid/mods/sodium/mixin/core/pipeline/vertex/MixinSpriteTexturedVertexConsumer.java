@@ -1,56 +1,80 @@
 package me.jellysquid.mods.sodium.mixin.core.pipeline.vertex;
 
-import me.jellysquid.mods.sodium.client.render.vertex.VertexBufferWriter;
-import me.jellysquid.mods.sodium.client.render.vertex.VertexFormatDescription;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.CommonVertexAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.common.TextureAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.format.VertexFormatDescription;
+import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
 import net.minecraft.client.render.SpriteTexturedVertexConsumer;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.texture.Sprite;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(SpriteTexturedVertexConsumer.class)
-public class MixinSpriteTexturedVertexConsumer implements VertexBufferWriter  {
+public class MixinSpriteTexturedVertexConsumer implements VertexBufferWriter {
     @Shadow
     @Final
     private VertexConsumer delegate;
 
-    @Shadow
-    @Final
-    private Sprite sprite;
+    private float minU, minV;
+    private float maxU, maxV;
+
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void onInit(VertexConsumer delegate, Sprite sprite, CallbackInfo ci) {
+        this.minU = sprite.getMinU();
+        this.minV = sprite.getMinV();
+
+        this.maxU = sprite.getMaxU();
+        this.maxV = sprite.getMaxV();
+    }
 
     @Override
-    public void push(final long ptr, int vertexCount, int stride, VertexFormatDescription format) {
-        this.transformVertices(ptr, vertexCount, stride, format);
+    public void push(MemoryStack stack, final long ptr, int count, VertexFormatDescription format) {
+        transform(ptr, count, format,
+                this.minU, this.minV, this.maxU, this.maxV);
 
         VertexBufferWriter.of(this.delegate)
-                .push(ptr, vertexCount, stride, format);
+                .push(stack, ptr, count, format);
     }
 
-    @Override
-    public long buffer(MemoryStack stack, int count, int stride, VertexFormatDescription format) {
-        return VertexBufferWriter.of(this.delegate)
-                .buffer(stack, count, stride, format);
-    }
+    /**
+     * Transforms the texture UVs for each vertex from their absolute coordinates into the sprite area specified
+     * by the parameters.
+     *
+     * @param ptr    The buffer of vertices to transform
+     * @param count  The number of vertices to transform
+     * @param format The format of the vertices
+     * @param minU   The minimum X-coordinate of the sprite bounds
+     * @param minV   The minimum Y-coordinate of the sprite bounds
+     * @param maxU   The maximum X-coordinate of the sprite bounds
+     * @param maxV   The maximum Y-coordinate of the sprite bounds
+     */
+    private static void transform(long ptr, int count, VertexFormatDescription format,
+                                 float minU, float minV, float maxU, float maxV) {
+        long stride = format.stride();
+        long offsetUV = format.getElementOffset(CommonVertexAttribute.TEXTURE);
 
-    private void transformVertices(final long ptr, int count, int stride, VertexFormatDescription format) {
-        long offset = ptr;
-        long offsetUV = format.getOffset(VertexFormats.TEXTURE_ELEMENT);
+        // The width/height of the sprite
+        float w = maxU - minU;
+        float h = maxV - minV;
 
         for (int vertexIndex = 0; vertexIndex < count; vertexIndex++) {
-            float u = MemoryUtil.memGetFloat(offset + offsetUV + 0);
-            float v = MemoryUtil.memGetFloat(offset + offsetUV + 4);
+            // The texture coordinates relative to the sprite bounds
+            float u = TextureAttribute.getU(ptr + offsetUV);
+            float v = TextureAttribute.getV(ptr + offsetUV);
 
-            u = this.sprite.getFrameU(u * 16.0f);
-            v = this.sprite.getFrameV(v * 16.0f);
+            // The texture coordinates in absolute space on the sprite sheet
+            float ut = minU + (w * u);
+            float vt = minV + (h * v);
 
-            MemoryUtil.memPutFloat(offset + offsetUV + 0, u);
-            MemoryUtil.memPutFloat(offset + offsetUV + 4, v);
+            TextureAttribute.put(ptr + offsetUV, ut, vt);
 
-            offset += stride;
+            ptr += stride;
         }
     }
 }

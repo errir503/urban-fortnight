@@ -2,26 +2,23 @@ package me.jellysquid.mods.sodium.client.render.chunk.compile.buffers;
 
 import me.jellysquid.mods.sodium.client.model.IndexBufferBuilder;
 import me.jellysquid.mods.sodium.client.model.quad.properties.ModelQuadFacing;
-import me.jellysquid.mods.sodium.client.render.vertex.type.ChunkVertexBufferBuilder;
+import me.jellysquid.mods.sodium.client.render.chunk.vertex.builder.ChunkMeshBufferBuilder;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
 import net.minecraft.client.texture.Sprite;
 
 public class BakedChunkModelBuilder implements ChunkModelBuilder {
-    private final ChunkVertexBufferBuilder vertexBuffer;
+    private final ChunkMeshBufferBuilder vertexBuffer;
     private final IndexBufferBuilder[] indexBuffers;
 
-    private final ChunkRenderData.Builder renderData;
+    private ChunkRenderData.Builder renderData;
 
-    public BakedChunkModelBuilder(ChunkVertexBufferBuilder vertexBuffer, IndexBufferBuilder[] indexBuffers,
-                                  ChunkRenderData.Builder renderData) {
+    public BakedChunkModelBuilder(ChunkMeshBufferBuilder vertexBuffer, IndexBufferBuilder[] indexBuffers) {
         this.indexBuffers = indexBuffers;
         this.vertexBuffer = vertexBuffer;
-
-        this.renderData = renderData;
     }
 
     @Override
-    public ChunkVertexBufferBuilder getVertexBuffer() {
+    public ChunkMeshBufferBuilder getVertexBuffer() {
         return this.vertexBuffer;
     }
 
@@ -32,7 +29,24 @@ public class BakedChunkModelBuilder implements ChunkModelBuilder {
 
     @Override
     public void addSprite(Sprite sprite) {
-        this.renderData.addSprite(sprite);
+//        this.renderData.addSprite(sprite);
     }
 
+    public IndexBufferBuilder[] getIndexBuffers() {
+        return this.indexBuffers;
+    }
+
+    public void destroy() {
+        this.vertexBuffer.destroy();
+    }
+
+    public void begin(ChunkRenderData.Builder renderData, int chunkId) {
+        this.renderData = renderData;
+
+        this.vertexBuffer.start(chunkId);
+
+        for (var indexBuffer : this.indexBuffers) {
+            indexBuffer.start();
+        }
+    }
 }

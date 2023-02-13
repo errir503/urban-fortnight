@@ -1,18 +1,21 @@
 package me.jellysquid.mods.sodium.client.render.vertex.serializers.generated;
 
-import me.jellysquid.mods.sodium.client.render.vertex.VertexFormatDescription;
-import me.jellysquid.mods.sodium.client.render.vertex.serializers.MemoryTransfer;
-import me.jellysquid.mods.sodium.client.render.vertex.serializers.VertexSerializer;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.CommonVertexAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.format.VertexFormatDescription;
+import net.caffeinemc.mods.sodium.api.vertex.serializer.VertexSerializer;
 import org.lwjgl.system.MemoryUtil;
 import org.objectweb.asm.*;
 
 import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
 import java.util.List;
 
 public class VertexSerializerFactory {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
-    public static Bytecode generate(List<MemoryTransfer> memoryCopies, String identifier) {
+    public static Bytecode generate(VertexFormatDescription srcFormat, VertexFormatDescription dstFormat, String identifier) {
+        var memoryCopies = createMemoryTransferList(srcFormat, dstFormat);
+
         var name = "me/jellysquid/mods/sodium/client/render/vertex/serializers/generated/VertexSerializer$Impl$" + identifier;
 
         ClassWriter classWriter = new ClassWriter(0);
@@ -53,14 +56,12 @@ public class VertexSerializerFactory {
             // Local variable table slots
             final int localThis = 0;
             final int localSrcPointer = 1;
-            final int localSrcStride = 3;
-            final int localDstPointer = 4;
-            final int localDstStride = 6;
-            final int localVertexCount = 7;
-            final int localVertexIndex = 8;
+            final int localDstPointer = 3;
+            final int localVertexCount = 5;
+            final int localVertexIndex = 6;
 
             // Serialization method
-            MethodVisitor methodVisitor = classWriter.visitMethod(Opcodes.ACC_PUBLIC, "serialize", "(JIJII)V", null, null);
+            MethodVisitor methodVisitor = classWriter.visitMethod(Opcodes.ACC_PUBLIC, "serialize", "(JJI)V", null, null);
             methodVisitor.visitCode();
 
             // Set up the loop's accumulator (vertexIndex)
@@ -128,8 +129,7 @@ public class VertexSerializerFactory {
             Label labelIncrementSourcePointer = new Label();
             methodVisitor.visitLabel(labelIncrementSourcePointer);
             methodVisitor.visitVarInsn(Opcodes.LLOAD, localSrcPointer);
-            methodVisitor.visitVarInsn(Opcodes.ILOAD, localSrcStride);
-            methodVisitor.visitInsn(Opcodes.I2L);
+            methodVisitor.visitLdcInsn((long) srcFormat.stride());
             methodVisitor.visitInsn(Opcodes.LADD);
             methodVisitor.visitVarInsn(Opcodes.LSTORE, localSrcPointer);
 
@@ -137,8 +137,7 @@ public class VertexSerializerFactory {
             Label labelIncrementDestinationPointer = new Label();
             methodVisitor.visitLabel(labelIncrementDestinationPointer);
             methodVisitor.visitVarInsn(Opcodes.LLOAD, localDstPointer);
-            methodVisitor.visitVarInsn(Opcodes.ILOAD, localDstStride);
-            methodVisitor.visitInsn(Opcodes.I2L);
+            methodVisitor.visitLdcInsn((long) dstFormat.stride());
             methodVisitor.visitInsn(Opcodes.LADD);
             methodVisitor.visitVarInsn(Opcodes.LSTORE, localDstPointer);
 
@@ -156,18 +155,69 @@ public class VertexSerializerFactory {
             methodVisitor.visitLabel(labelExit);
             methodVisitor.visitLocalVariable("this", "L" + name + ";", null, labelLoopInit, labelExit, localThis);
             methodVisitor.visitLocalVariable("src", "J", null, labelLoopInit, labelExit, localSrcPointer);
-            methodVisitor.visitLocalVariable("srcStride", "I", null, labelLoopInit, labelExit, localSrcStride);
             methodVisitor.visitLocalVariable("dst", "J", null, labelLoopInit, labelExit, localDstPointer);
-            methodVisitor.visitLocalVariable("dstStride", "I", null, labelLoopInit, labelExit, localDstStride);
             methodVisitor.visitLocalVariable("vertexCount", "I", null, labelLoopInit, labelExit, localVertexCount);
             methodVisitor.visitLocalVariable("vertexIndex", "I", null, labelLoopConditionSetup, labelLoopConditionComparison, localVertexIndex);
-            methodVisitor.visitMaxs(6, 9);
+            methodVisitor.visitMaxs(6, 7);
             methodVisitor.visitEnd();
         }
 
         classWriter.visitEnd();
 
         return new Bytecode(classWriter.toByteArray());
+    }
+
+    private static List<MemoryTransfer> createMemoryTransferList(VertexFormatDescription srcVertexFormat, VertexFormatDescription dstVertexFormat) {
+        var ops = new ArrayList<MemoryTransfer>();
+
+        for (var elementType : CommonVertexAttribute.values()) {
+            // Check if we need to transfer the element into the destination format
+            if (!dstVertexFormat.containsElement(elementType)) {
+                continue;
+            }
+
+            // If the destination format has the element, then the source format needs to have it as well
+            if (!srcVertexFormat.containsElement(elementType)) {
+                throw new RuntimeException("Source format is missing element %s as required by destination format".formatted(elementType));
+            }
+
+            var srcOffset = srcVertexFormat.getElementOffset(elementType);
+            var dstOffset = dstVertexFormat.getElementOffset(elementType);
+
+            ops.add(new MemoryTransfer(srcOffset, dstOffset, elementType.getByteLength()));
+        }
+
+        return mergeAdjacentMemoryTransfers(ops);
+    }
+
+    private static List<MemoryTransfer> mergeAdjacentMemoryTransfers(ArrayList<MemoryTransfer> src) {
+        var dst = new ArrayList<MemoryTransfer>(src.size());
+
+        var srcOffset = 0;
+        var dstOffset = 0;
+
+        var length = 0;
+
+        for (var op : src) {
+            if (srcOffset + length == op.src() && dstOffset + length == op.dst()) {
+                length += op.length();
+                continue;
+            }
+
+            if (length > 0) {
+                dst.add(new MemoryTransfer(srcOffset, dstOffset, length));
+            }
+
+            srcOffset = op.src();
+            dstOffset = op.dst();
+            length = op.length();
+        }
+
+        if (length > 0) {
+            dst.add(new MemoryTransfer(srcOffset, dstOffset, length));
+        }
+
+        return dst;
     }
 
     public static Class<?> define(Bytecode bytecode) {
@@ -190,5 +240,9 @@ public class VertexSerializerFactory {
         public byte[] copy() {
             return this.data.clone();
         }
+    }
+
+    public record MemoryTransfer(int src, int dst, int length) {
+
     }
 }

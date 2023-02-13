@@ -1,15 +1,17 @@
 package me.jellysquid.mods.sodium.client.render.chunk.tasks;
 
+import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import me.jellysquid.mods.sodium.client.gl.compile.ChunkBuildContext;
+import me.jellysquid.mods.sodium.client.render.chunk.passes.DefaultRenderPasses;
+import me.jellysquid.mods.sodium.client.render.chunk.passes.RenderPass;
 import me.jellysquid.mods.sodium.client.render.chunk.RenderSection;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildBuffers;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildResult;
+import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.BlockRenderCache;
+import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.BlockRenderContext;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkMeshData;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderBounds;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
-import me.jellysquid.mods.sodium.client.render.chunk.passes.BlockRenderPass;
-import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.BlockRenderContext;
-import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.BlockRenderCache;
 import me.jellysquid.mods.sodium.client.util.task.CancellationSource;
 import me.jellysquid.mods.sodium.client.world.WorldSlice;
 import me.jellysquid.mods.sodium.client.world.cloned.ChunkRenderContext;
@@ -17,15 +19,12 @@ import net.minecraft.block.BlockRenderType;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.block.entity.BlockEntityRenderer;
 import net.minecraft.client.render.chunk.ChunkOcclusionDataBuilder;
 import net.minecraft.client.render.model.BakedModel;
 import net.minecraft.fluid.FluidState;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.EnumMap;
 import java.util.Map;
 
 /**
@@ -89,9 +88,9 @@ public class ChunkRenderRebuildTask extends ChunkRenderBuildTask {
                     blockPos.set(x, y, z);
                     modelOffset.set(x & 15, y & 15, z & 15);
 
-                    if (blockState.getRenderType() == BlockRenderType.MODEL) {
-                        RenderLayer layer = RenderLayers.getBlockLayer(blockState);
+                    var rendered = false;
 
+                    if (blockState.getRenderType() == BlockRenderType.MODEL) {
                         BakedModel model = cache.getBlockModels()
                                 .getModel(blockState);
 
@@ -99,15 +98,17 @@ public class ChunkRenderRebuildTask extends ChunkRenderBuildTask {
 
                         context.update(blockPos, modelOffset, blockState, model, seed);
 
-                        cache.getBlockRenderer().renderModel(context, buffers.get(layer));
+                        if (cache.getBlockRenderer().renderModel(context, buffers)) {
+                            rendered = true;
+                        }
                     }
 
                     FluidState fluidState = blockState.getFluidState();
 
                     if (!fluidState.isEmpty()) {
-                        RenderLayer layer = RenderLayers.getFluidLayer(fluidState);
-
-                        cache.getFluidRenderer().render(slice, fluidState, blockPos, modelOffset, buffers.get(layer));
+                        if (cache.getFluidRenderer().render(slice, fluidState, blockPos, modelOffset, buffers)) {
+                            rendered = true;
+                        }
                     }
 
                     if (blockState.hasBlockEntity()) {
@@ -124,19 +125,23 @@ public class ChunkRenderRebuildTask extends ChunkRenderBuildTask {
 
                     if (blockState.isOpaqueFullCube(slice, blockPos)) {
                         occluder.markClosed(blockPos);
+                    }
+
+                    if (rendered) {
                         bounds.addBlock(x & 15, y & 15, z & 15);
                     }
                 }
             }
         }
 
-        Map<BlockRenderPass, ChunkMeshData> meshes = new EnumMap<>(BlockRenderPass.class);
+        Map<RenderPass, ChunkMeshData> meshes = new Reference2ReferenceOpenHashMap<>();
 
-        for (BlockRenderPass pass : BlockRenderPass.VALUES) {
+        for (RenderPass pass : DefaultRenderPasses.ALL) {
             ChunkMeshData mesh = buffers.createMesh(pass);
 
             if (mesh != null) {
                 meshes.put(pass, mesh);
+                renderData.addRenderPass(pass);
             }
         }
 
@@ -144,5 +149,10 @@ public class ChunkRenderRebuildTask extends ChunkRenderBuildTask {
         renderData.setBounds(bounds.build(this.render.getChunkPos()));
 
         return new ChunkBuildResult(this.render, renderData.build(), meshes, this.frame);
+    }
+
+    @Override
+    public void releaseResources() {
+        this.renderContext.releaseResources();
     }
 }

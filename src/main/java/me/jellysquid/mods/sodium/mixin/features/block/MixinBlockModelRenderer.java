@@ -1,11 +1,10 @@
 package me.jellysquid.mods.sodium.mixin.features.block;
 
 import me.jellysquid.mods.sodium.client.model.quad.ModelQuadView;
-import me.jellysquid.mods.sodium.client.render.vertex.formats.ModelVertex;
-import me.jellysquid.mods.sodium.client.render.vertex.VertexBufferWriter;
+import me.jellysquid.mods.sodium.client.render.immediate.model.BakedModelEncoder;
+import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
 import me.jellysquid.mods.sodium.client.render.texture.SpriteUtil;
-import me.jellysquid.mods.sodium.client.util.Norm3b;
-import me.jellysquid.mods.sodium.client.util.color.ColorABGR;
+import net.caffeinemc.mods.sodium.api.util.ColorABGR;
 import me.jellysquid.mods.sodium.common.util.DirectionUtil;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.render.VertexConsumer;
@@ -15,10 +14,8 @@ import net.minecraft.client.render.model.BakedQuad;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.random.Xoroshiro128PlusPlusRandom;
-import org.joml.Matrix3f;
-import org.joml.Matrix4f;
-import org.lwjgl.system.MemoryStack;
+import net.minecraft.util.math.random.LocalRandom;
+import net.minecraft.util.math.random.Random;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 
@@ -26,7 +23,7 @@ import java.util.List;
 
 @Mixin(BlockModelRenderer.class)
 public class MixinBlockModelRenderer {
-    private final Xoroshiro128PlusPlusRandom random = new Xoroshiro128PlusPlusRandom(42L);
+    private final Random random = new LocalRandom(42L);
 
     /**
      * @reason Use optimized vertex writer intrinsics, avoid allocations
@@ -34,7 +31,7 @@ public class MixinBlockModelRenderer {
      */
     @Overwrite
     public void render(MatrixStack.Entry entry, VertexConsumer vertexConsumer, BlockState blockState, BakedModel bakedModel, float red, float green, float blue, int light, int overlay) {
-        Xoroshiro128PlusPlusRandom random = this.random;
+        Random random = this.random;
 
         var writer = VertexBufferWriter.of(vertexConsumer);
 
@@ -70,7 +67,7 @@ public class MixinBlockModelRenderer {
 
             ModelQuadView quad = ((ModelQuadView) bakedQuad);
 
-            ModelVertex.writeQuadVertices(writer, matrices, quad, light, overlay, color);
+            BakedModelEncoder.writeQuadVertices(writer, matrices, quad, light, overlay, color);
 
             SpriteUtil.markSpriteActive(quad.getSprite());
         }

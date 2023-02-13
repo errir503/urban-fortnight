@@ -1,11 +1,14 @@
 package me.jellysquid.mods.sodium.mixin.core.pipeline.vertex;
 
-import me.jellysquid.mods.sodium.client.render.vertex.VertexBufferWriter;
-import me.jellysquid.mods.sodium.client.render.vertex.VertexFormatDescription;
-import me.jellysquid.mods.sodium.client.util.Norm3b;
+import net.caffeinemc.mods.sodium.api.util.ColorABGR;
+import net.caffeinemc.mods.sodium.api.util.NormI8;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.CommonVertexAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.common.ColorAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.attributes.common.TextureAttribute;
+import net.caffeinemc.mods.sodium.api.vertex.format.VertexFormatDescription;
+import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
 import net.minecraft.client.render.OverlayVertexConsumer;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexFormats;
 import net.minecraft.util.math.Direction;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
@@ -36,53 +39,62 @@ public class MixinOverlayVertexConsumer implements VertexBufferWriter {
     private float textureScale;
 
     @Override
-    public void push(long ptr, int count, int stride, VertexFormatDescription format) {
-        this.writeVerticesSlow(ptr, count, stride, format);
+    public void push(MemoryStack stack, long ptr, int count, VertexFormatDescription format) {
+        transform(ptr, count, format,
+                this.inverseNormalMatrix, this.inverseTextureMatrix, this.textureScale);
+
+        VertexBufferWriter.of(this.delegate)
+                .push(stack, ptr, count, format);
     }
 
-    @Override
-    public long buffer(MemoryStack stack, int count, int stride, VertexFormatDescription format) {
-        return VertexBufferWriter.of(this.delegate)
-                .buffer(stack, count, stride, format);
-    }
+    /**
+     * Transforms the overlay UVs element of each vertex to create a perspective-mapped effect.
+     *
+     * @param ptr    The buffer of vertices to transform
+     * @param count  The number of vertices to transform
+     * @param format The format of the vertices
+     * @param inverseNormalMatrix The inverted normal matrix
+     * @param inverseTextureMatrix The inverted texture matrix
+     * @param textureScale The amount which the overlay texture should be adjusted
+     */
+    private static void transform(long ptr, int count, VertexFormatDescription format,
+                                  Matrix3f inverseNormalMatrix, Matrix4f inverseTextureMatrix, float textureScale) {
+        long stride = format.stride();
 
-    private void writeVerticesSlow(long ptr, int count, int stride, VertexFormatDescription format) {
-        var offsetPosition = format.getOffset(VertexFormats.POSITION_ELEMENT);
-        var offsetNormal = format.getOffset(VertexFormats.NORMAL_ELEMENT);
-        var offsetOverlay = format.getOffset(VertexFormats.OVERLAY_ELEMENT);
-        var offsetLight = format.getOffset(VertexFormats.LIGHT_ELEMENT);
+        var offsetPosition = format.getElementOffset(CommonVertexAttribute.POSITION);
+        var offsetColor = format.getElementOffset(CommonVertexAttribute.COLOR);
+        var offsetNormal = format.getElementOffset(CommonVertexAttribute.NORMAL);
+        var offsetTexture = format.getElementOffset(CommonVertexAttribute.TEXTURE);
+
+        int color = ColorABGR.pack(1.0f, 1.0f, 1.0f, 1.0f);
+
+        var normal = new Vector3f(Float.NaN);
+        var position = new Vector4f(Float.NaN);
 
         for (int vertexIndex = 0; vertexIndex < count; vertexIndex++) {
-            float positionX = MemoryUtil.memGetFloat(ptr + offsetPosition + 0);
-            float positionY = MemoryUtil.memGetFloat(ptr + offsetPosition + 4);
-            float positionZ = MemoryUtil.memGetFloat(ptr + offsetPosition + 8);
+            position.x = MemoryUtil.memGetFloat(ptr + offsetPosition + 0);
+            position.y = MemoryUtil.memGetFloat(ptr + offsetPosition + 4);
+            position.z = MemoryUtil.memGetFloat(ptr + offsetPosition + 8);
+            position.w = 1.0f;
 
-            int overlay = MemoryUtil.memGetInt(ptr + offsetOverlay);
-            int light = MemoryUtil.memGetInt(ptr + offsetLight);
-            int normal = MemoryUtil.memGetInt(ptr + offsetNormal);
+            int packedNormal = MemoryUtil.memGetInt(ptr + offsetNormal);
+            normal.x = NormI8.unpackX(packedNormal);
+            normal.y = NormI8.unpackY(packedNormal);
+            normal.z = NormI8.unpackZ(packedNormal);
 
-            float normalX = Norm3b.unpackX(normal);
-            float normalY = Norm3b.unpackY(normal);
-            float normalZ = Norm3b.unpackZ(normal);
+            Vector3f transformedNormal = inverseNormalMatrix.transform(normal);
+            Direction direction = Direction.getFacing(transformedNormal.x(), transformedNormal.y(), transformedNormal.z());
 
-            Vector3f normalCoord = this.inverseNormalMatrix.transform(new Vector3f(normalX, normalY, normalZ));
-            Direction direction = Direction.getFacing(normalCoord.x(), normalCoord.y(), normalCoord.z());
+            Vector4f transformedTexture = inverseTextureMatrix.transform(position);
+            transformedTexture.rotateY(3.1415927F);
+            transformedTexture.rotateX(-1.5707964F);
+            transformedTexture.rotate(direction.getRotationQuaternion());
 
-            Vector4f textureCoord = this.inverseTextureMatrix.transform(new Vector4f(positionX, positionY, positionZ, 1.0F));
-            textureCoord.rotateY(3.1415927F);
-            textureCoord.rotateX(-1.5707964F);
-            textureCoord.rotate(direction.getRotationQuaternion());
+            float textureU = -transformedTexture.x() * textureScale;
+            float textureV = -transformedTexture.y() * textureScale;
 
-            float textureU = -textureCoord.x() * this.textureScale;
-            float textureV = -textureCoord.y() * this.textureScale;
-
-            this.delegate.vertex(positionX, positionY, positionZ)
-                    .color(1.0F, 1.0F, 1.0F, 1.0F)
-                    .texture(textureU, textureV)
-                    .overlay(overlay)
-                    .light(light)
-                    .normal(normalX, normalY, normalZ)
-                    .next();
+            ColorAttribute.set(ptr + offsetColor, color);
+            TextureAttribute.put(ptr + offsetTexture, textureU, textureV);
 
             ptr += stride;
         }
