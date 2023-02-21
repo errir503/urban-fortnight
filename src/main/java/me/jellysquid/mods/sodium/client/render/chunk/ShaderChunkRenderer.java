@@ -4,8 +4,7 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import me.jellysquid.mods.sodium.client.gl.attribute.GlVertexFormat;
 import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
 import me.jellysquid.mods.sodium.client.gl.shader.*;
-import me.jellysquid.mods.sodium.client.gl.texture.GlSampler;
-import me.jellysquid.mods.sodium.client.render.chunk.passes.RenderPass;
+import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import me.jellysquid.mods.sodium.client.render.chunk.shader.*;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkMeshAttribute;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
@@ -23,21 +22,12 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
 
     protected final RenderDevice device;
 
-    protected final EnumMap<ChunkShaderTextureSlot, GlSampler> samplers;
-
     protected GlProgram<ChunkShaderInterface> activeProgram;
 
     public ShaderChunkRenderer(RenderDevice device, ChunkVertexType vertexType) {
         this.device = device;
         this.vertexType = vertexType;
         this.vertexFormat = vertexType.getVertexFormat();
-
-        var samplers = new EnumMap<ChunkShaderTextureSlot, GlSampler>(ChunkShaderTextureSlot.class);
-        samplers.put(ChunkShaderTextureSlot.BLOCK, TextureUtil.createBlockTextureSampler(false));
-        samplers.put(ChunkShaderTextureSlot.BLOCK_MIPPED, TextureUtil.createBlockTextureSampler(true));
-        samplers.put(ChunkShaderTextureSlot.LIGHT, TextureUtil.createLightTextureSampler());
-
-        this.samplers = samplers;
     }
 
     protected GlProgram<ChunkShaderInterface> compileProgram(ChunkShaderOptions options) {
@@ -75,31 +65,28 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
         }
     }
 
-    protected void begin(RenderPass pass) {
+    protected void begin(TerrainRenderPass pass) {
+        pass.startDrawing();
+
         ChunkShaderOptions options = new ChunkShaderOptions(ChunkFogMode.SMOOTH, pass, this.vertexType);
 
         this.activeProgram = this.compileProgram(options);
         this.activeProgram.bind();
         this.activeProgram.getInterface()
-                .startDrawing(this.samplers);
+                .setupState();
     }
 
-    protected void end() {
-        this.activeProgram.getInterface()
-                .endDrawing();
+    protected void end(TerrainRenderPass pass) {
         this.activeProgram.unbind();
         this.activeProgram = null;
+
+        pass.endDrawing();
     }
 
     @Override
     public void delete() {
         this.programs.values()
                 .forEach(GlProgram::delete);
-        this.programs.clear();
     }
 
-    @Override
-    public ChunkVertexType getVertexType() {
-        return this.vertexType;
-    }
 }

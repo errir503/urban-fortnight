@@ -2,7 +2,8 @@ package me.jellysquid.mods.sodium.client.render.chunk.data;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
-import me.jellysquid.mods.sodium.client.render.chunk.passes.RenderPass;
+import me.jellysquid.mods.sodium.client.render.chunk.RenderSectionFlags;
+import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import me.jellysquid.mods.sodium.client.render.texture.SpriteExtended;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.render.chunk.ChunkOcclusionData;
@@ -20,7 +21,7 @@ public class ChunkRenderData {
             .build();
     public static final ChunkRenderData EMPTY = createEmptyData();
 
-    private List<RenderPass> renderPasses;
+    private List<TerrainRenderPass> blockRenderPasses;
     private List<BlockEntity> globalBlockEntities;
     private List<BlockEntity> blockEntities;
 
@@ -28,15 +29,6 @@ public class ChunkRenderData {
     private ChunkRenderBounds bounds;
 
     private List<Sprite> animatedSprites;
-
-    private boolean isEmpty;
-
-    /**
-     * @return True if the chunk has no renderables, otherwise false
-     */
-    public boolean isEmpty() {
-        return this.isEmpty;
-    }
 
     public ChunkRenderBounds getBounds() {
         return this.bounds;
@@ -65,8 +57,22 @@ public class ChunkRenderData {
         return this.globalBlockEntities;
     }
 
+    public int getFlags() {
+        int flags = 0;
+
+        if (!this.blockRenderPasses.isEmpty()) {
+            flags |= RenderSectionFlags.HAS_BLOCK_GEOMETRY;
+        }
+
+        if (!this.blockEntities.isEmpty() || !this.globalBlockEntities.isEmpty()) {
+            flags |= RenderSectionFlags.HAS_BLOCK_ENTITIES;
+        }
+
+        return flags;
+    }
+
     public static class Builder {
-        private final List<RenderPass> renderPasses = new ArrayList<>();
+        private final List<TerrainRenderPass> renderPasses = new ArrayList<>();
         private final List<BlockEntity> globalBlockEntities = new ArrayList<>();
         private final List<BlockEntity> blockEntities = new ArrayList<>();
         private final Set<Sprite> animatedSprites = new ObjectOpenHashSet<>();
@@ -74,7 +80,7 @@ public class ChunkRenderData {
         private ChunkOcclusionData occlusionData;
         private ChunkRenderBounds bounds = ChunkRenderBounds.ALWAYS_FALSE;
 
-        public void addRenderPass(RenderPass pass) {
+        public void addRenderPass(TerrainRenderPass pass) {
             this.renderPasses.add(pass);
         }
 
@@ -113,7 +119,7 @@ public class ChunkRenderData {
             data.occlusionData = this.occlusionData;
             data.bounds = this.bounds;
             data.animatedSprites = new ObjectArrayList<>(this.animatedSprites);
-            data.isEmpty = this.globalBlockEntities.isEmpty() && this.blockEntities.isEmpty() && this.renderPasses.isEmpty();
+            data.blockRenderPasses = this.renderPasses;
 
             return data;
         }

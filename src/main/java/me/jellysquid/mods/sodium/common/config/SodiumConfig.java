@@ -43,7 +43,9 @@ public class SodiumConfig {
         this.addMixinRule("features.gui.font", true);
         this.addMixinRule("features.item", true);
         this.addMixinRule("features.matrix_stack", true);
+        this.addMixinRule("features.mipmaps", true);
         this.addMixinRule("features.model", true);
+        this.addMixinRule("features.optimized_stitching", true);
         this.addMixinRule("features.options", true);
         this.addMixinRule("features.particle", true);
         this.addMixinRule("features.particle.cull", true);

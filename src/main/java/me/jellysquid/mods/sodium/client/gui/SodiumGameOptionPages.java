@@ -321,15 +321,6 @@ public class SodiumGameOptionPages {
         List<OptionGroup> groups = new ArrayList<>();
 
         groups.add(OptionGroup.createBuilder()
-                .add(OptionImpl.createBuilder(SodiumGameOptions.ArenaMemoryAllocator.class, sodiumOpts)
-                        .setName(Text.translatable("sodium.options.chunk_memory_allocator.name"))
-                        .setTooltip(Text.translatable("sodium.options.chunk_memory_allocator.tooltip"))
-                        .setControl(option -> new CyclingControl<>(option, SodiumGameOptions.ArenaMemoryAllocator.class))
-                        .setImpact(OptionImpact.HIGH)
-                        .setBinding((opts, value) -> opts.advanced.arenaMemoryAllocator = value, opts -> opts.advanced.arenaMemoryAllocator)
-                        .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
-                        .build()
-                )
                 .add(OptionImpl.createBuilder(boolean.class, sodiumOpts)
                         .setName(Text.translatable("sodium.options.use_persistent_mapping.name"))
                         .setTooltip(Text.translatable("sodium.options.use_persistent_mapping.tooltip"))
@@ -348,17 +339,6 @@ public class SodiumGameOptionPages {
                         .setTooltip(Text.translatable("sodium.options.cpu_render_ahead_limit.tooltip"))
                         .setControl(opt -> new SliderControl(opt, 0, 9, 1, ControlValueFormatter.translateVariable("sodium.options.cpu_render_ahead_limit.value")))
                         .setBinding((opts, value) -> opts.advanced.cpuRenderAheadLimit = value, opts -> opts.advanced.cpuRenderAheadLimit)
-                        .build()
-                )
-                .build());
-
-        groups.add(OptionGroup.createBuilder()
-                .add(OptionImpl.createBuilder(boolean.class, sodiumOpts)
-                        .setName(Text.translatable("sodium.options.allow_direct_memory_access.name"))
-                        .setTooltip(Text.translatable("sodium.options.allow_direct_memory_access.tooltip"))
-                        .setControl(TickBoxControl::new)
-                        .setImpact(OptionImpact.HIGH)
-                        .setBinding((opts, value) -> opts.advanced.allowDirectMemoryAccess = value, opts -> opts.advanced.allowDirectMemoryAccess)
                         .build()
                 )
                 .build());

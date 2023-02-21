@@ -1,25 +1,19 @@
 package me.jellysquid.mods.sodium.client.render.chunk.region;
 
-import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
-import me.jellysquid.mods.sodium.client.SodiumClientMod;
-import me.jellysquid.mods.sodium.client.gl.arena.AsyncBufferArena;
 import me.jellysquid.mods.sodium.client.gl.arena.GlBufferArena;
-import me.jellysquid.mods.sodium.client.gl.arena.SwapBufferArena;
 import me.jellysquid.mods.sodium.client.gl.arena.staging.StagingBuffer;
 import me.jellysquid.mods.sodium.client.gl.device.CommandList;
 import me.jellysquid.mods.sodium.client.gl.tessellation.GlTessellation;
-import me.jellysquid.mods.sodium.client.render.chunk.passes.RenderPass;
+import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import me.jellysquid.mods.sodium.client.render.chunk.ChunkGraphicsState;
 import me.jellysquid.mods.sodium.client.render.chunk.RenderSection;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
 import me.jellysquid.mods.sodium.client.util.MathUtil;
-import me.jellysquid.mods.sodium.client.util.frustum.Frustum;
 import net.minecraft.util.math.ChunkSectionPos;
 import org.apache.commons.lang3.Validate;
 
 import java.util.Map;
-import java.util.Set;
 
 public class RenderRegion {
     public static final int REGION_WIDTH = 8;
@@ -50,7 +44,7 @@ public class RenderRegion {
 
     public final GlBufferArena indexBuffers;
 
-    public final Map<RenderPass, RenderRegionStorage> storage = new Reference2ReferenceOpenHashMap<>();
+    public final Map<TerrainRenderPass, RenderRegionStorage> storage = new Reference2ReferenceOpenHashMap<>();
 
     public RenderRegion(CommandList commandList, StagingBuffer stagingBuffer, int x, int y, int z) {
         this.x = x;
@@ -60,8 +54,9 @@ public class RenderRegion {
         int expectedVertexCount = REGION_SIZE * 756;
         int expectedIndexCount = (expectedVertexCount / 4) * 6;
 
-        this.vertexBuffers = createArena(commandList, expectedVertexCount, ChunkMeshFormats.COMPACT.getVertexFormat().getStride(), stagingBuffer);
-        this.indexBuffers = createArena(commandList, expectedIndexCount, Integer.BYTES, stagingBuffer);
+        int stride = ChunkMeshFormats.COMPACT.getVertexFormat().getStride();
+        this.vertexBuffers = new GlBufferArena(commandList, expectedVertexCount, stride, stagingBuffer);
+        this.indexBuffers = new GlBufferArena(commandList, expectedIndexCount, Integer.BYTES, stagingBuffer);
     }
 
     public static RenderRegion createRegionForChunk(CommandList commandList, StagingBuffer stagingBuffer, int x, int y, int z) {
@@ -117,18 +112,11 @@ public class RenderRegion {
         return this.vertexBuffers.getDeviceAllocatedMemory() + this.indexBuffers.getDeviceAllocatedMemory();
     }
 
-    private static GlBufferArena createArena(CommandList commandList, int initialCapacity, int stride, StagingBuffer stagingBuffer) {
-        return switch (SodiumClientMod.options().advanced.arenaMemoryAllocator) {
-            case ASYNC -> new AsyncBufferArena(commandList, initialCapacity, stride, stagingBuffer);
-            case SWAP -> new SwapBufferArena(commandList, stride);
-        };
-    }
-
-    public RenderRegionStorage getStorage(RenderPass pass) {
+    public RenderRegionStorage getStorage(TerrainRenderPass pass) {
         return this.storage.get(pass);
     }
 
-    public RenderRegionStorage createStorage(RenderPass pass) {
+    public RenderRegionStorage createStorage(TerrainRenderPass pass) {
         RenderRegionStorage storage = this.storage.get(pass);
 
         if (storage == null) {
