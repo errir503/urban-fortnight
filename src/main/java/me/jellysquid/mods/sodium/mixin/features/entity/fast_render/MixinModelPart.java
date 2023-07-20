@@ -65,7 +65,11 @@ public class MixinModelPart {
                 long buffer = stack.nmalloc(4 * 6 * ModelVertex.STRIDE);
                 long ptr = buffer;
 
+                int count = 0;
+
                 for (ModelCuboid.Quad quad : cuboid.quads) {
+                    if (quad == null) continue;
+
                     var normal = quad.getNormal(matrices.getNormalMatrix());
 
                     for (int i = 0; i < 4; i++) {
@@ -76,9 +80,11 @@ public class MixinModelPart {
 
                         ptr += ModelVertex.STRIDE;
                     }
+
+                    count += 4;
                 }
 
-                writer.push(stack, buffer, 4 * 6, ModelVertex.FORMAT);
+                writer.push(stack, buffer, count, ModelVertex.FORMAT);
             }
         }
     }

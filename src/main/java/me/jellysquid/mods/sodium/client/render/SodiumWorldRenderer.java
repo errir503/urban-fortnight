@@ -328,8 +328,8 @@ public class SodiumWorldRenderer {
         return this.isBoxVisible(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     }
 
-    public boolean doesChunkHaveFlag(int x, int z, int status) {
-        return this.chunkTracker.hasMergedFlags(x, z, status);
+    public boolean doesChunkHaveFlag(int x, int z, int flags) {
+        return this.chunkTracker.hasMergedFlags(x, z, flags);
     }
 
     public boolean isBoxVisible(double x1, double y1, double z1, double x2, double y2, double z2) {
@@ -361,9 +361,9 @@ public class SodiumWorldRenderer {
     }
 
     public String getChunksDebugString() {
-        // C: visible/total
+        // C: visible/total D: distance
         // TODO: add dirty and queued counts
-        return String.format("C: %s/%s", this.renderSectionManager.getVisibleChunkCount(), this.renderSectionManager.getTotalSections());
+        return String.format("C: %d/%d D: %d", this.renderSectionManager.getVisibleChunkCount(), this.renderSectionManager.getTotalSections(), this.renderDistance);
     }
 
     /**

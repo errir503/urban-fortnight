@@ -3,7 +3,6 @@ package me.jellysquid.mods.sodium.client.render.chunk.vertex.builder;
 import me.jellysquid.mods.sodium.client.render.chunk.terrain.material.Material;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkVertexEncoder;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
-import me.jellysquid.mods.sodium.client.util.NativeBuffer;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -29,7 +28,7 @@ public class ChunkMeshBufferBuilder {
         this.initialCapacity = initialCapacity;
     }
 
-    public int push(ChunkVertexEncoder.Vertex[] vertices, Material material) {
+    public void push(ChunkVertexEncoder.Vertex[] vertices, Material material) {
         var vertexStart = this.count;
         var vertexCount = vertices.length;
 
@@ -44,8 +43,6 @@ public class ChunkMeshBufferBuilder {
         }
 
         this.count += vertexCount;
-
-        return vertexStart;
     }
 
     private void grow(int len) {
@@ -76,11 +73,19 @@ public class ChunkMeshBufferBuilder {
         this.buffer = null;
     }
 
-    public NativeBuffer pop() {
-        if (this.count == 0) {
-            return null;
+    public boolean isEmpty() {
+        return this.count == 0;
+    }
+
+    public ByteBuffer slice() {
+        if (this.isEmpty()) {
+            throw new IllegalStateException("No vertex data in buffer");
         }
 
-        return NativeBuffer.copy(MemoryUtil.memSlice(this.buffer, 0, this.stride * this.count));
+        return MemoryUtil.memSlice(this.buffer, 0, this.stride * this.count);
+    }
+
+    public int count() {
+        return this.count;
     }
 }

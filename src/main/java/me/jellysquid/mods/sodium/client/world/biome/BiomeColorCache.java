@@ -1,208 +1,84 @@
 package me.jellysquid.mods.sodium.client.world.biome;
 
-import me.jellysquid.mods.sodium.client.util.color.ColorARGB;
+import me.jellysquid.mods.sodium.client.util.color.BoxBlur;
 import me.jellysquid.mods.sodium.client.world.WorldSlice;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.world.level.ColorResolver;
-
-import java.util.Arrays;
+import me.jellysquid.mods.sodium.client.util.color.BoxBlur.ColorBuffer;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.world.biome.Biome;
 
 public class BiomeColorCache {
-    // The maximum distance a vertex is allowed to reach beyond its origin when sampling blended biome colours.
-    // The default value of 2 should suffice for complex models without degrading quality.
-    private static final int MODEL_RADIUS = 2;
-
-    private static final int BLENDED_COLORS_DIM = 16 + (MODEL_RADIUS * 2);
-
-    private final ColorResolver resolver;
     private final WorldSlice slice;
+    private final int originX, originZ;
+    private final int minCoord, maxCoord;
+    private final ColorBuffer[][] cache;
+    private final int blendDistance;
+    private final int length;
 
-    private final int[] cache;
-    private final int[] blendedColorsZ;
-    private final int[] blendedColorsXZ;
-    private final int[] blendedColorsXYZ;
-
-    private final int radius;
-    private final int diameter;
-    private final int dim;
-
-    private final int minX, minY, minZ;
-
-    private final int blendedColorsMinX;
-    private final int blendedColorsMinY;
-    private final int blendedColorsMinZ;
-
-    public BiomeColorCache(ColorResolver resolver, WorldSlice slice) {
-        this.resolver = resolver;
+    public BiomeColorCache(WorldSlice slice, int blendDistance) {
         this.slice = slice;
-        this.radius = MinecraftClient.getInstance().options.biomeBlendRadius;
 
-        ChunkSectionPos origin = this.slice.getOrigin();
+        this.blendDistance = blendDistance;
 
-        this.minX = origin.getMinX() - (this.radius + MODEL_RADIUS);
-        this.minY = origin.getMinY() - (this.radius + MODEL_RADIUS);
-        this.minZ = origin.getMinZ() - (this.radius + MODEL_RADIUS);
+        int margin = MathHelper.clamp(this.blendDistance, 3, 15);
 
-        this.dim = 16 + ((this.radius + MODEL_RADIUS) * 2);
+        this.length = 16 + (margin * 2);
 
-        this.blendedColorsMinX = origin.getMinX() - MODEL_RADIUS;
-        this.blendedColorsMinY = origin.getMinY() - MODEL_RADIUS;
-        this.blendedColorsMinZ = origin.getMinZ() - MODEL_RADIUS;
+        this.minCoord = 16 - margin;
+        this.maxCoord = this.length - 1;
 
-        this.cache = new int[this.dim * this.dim * this.dim];
-        this.blendedColorsZ = new int[this.dim * this.dim * BLENDED_COLORS_DIM];
-        this.blendedColorsXZ = new int[this.dim * BLENDED_COLORS_DIM * BLENDED_COLORS_DIM];
-        this.blendedColorsXYZ = new int[BLENDED_COLORS_DIM * BLENDED_COLORS_DIM * BLENDED_COLORS_DIM];
+        this.cache = new ColorBuffer[this.length][];
 
-        // We only need to calculate the diameter as we divide after blending along each axis.
-        // This does result in a minor loss of accuracy compared to dividing the accumulated colour of the entire area,
-        // but the results are indistinguishable to the human eye.
-        this.diameter = (this.radius * 2) + 1;
+        var origin = slice.getOrigin();
 
-        Arrays.fill(this.cache, -1);
-        Arrays.fill(this.blendedColorsZ, -1);
-        Arrays.fill(this.blendedColorsXZ, -1);
-        Arrays.fill(this.blendedColorsXYZ, -1);
+        this.originX = origin.getMinX() - margin;
+        this.originZ = origin.getMinZ() - margin;
     }
 
-    public int getBlendedColor(BlockPos pos) {
+    public int getColor(BiomeColorSource source, int blockX, int blockY, int blockZ) {
+        var relX = MathHelper.clamp(blockX - this.minCoord, 0, this.maxCoord);
+        var relY = MathHelper.clamp(blockY - this.minCoord, 0, this.maxCoord);
+        var relZ = MathHelper.clamp(blockZ - this.minCoord, 0, this.maxCoord);
 
-        // Colours have been blended on all axis.
-        int x2 = pos.getX() - this.blendedColorsMinX;
-        int y2 = pos.getY() - this.blendedColorsMinY;
-        int z2 = pos.getZ() - this.blendedColorsMinZ;
+        var buffers = this.cache[relY];
 
-        int index = (((y2 * BLENDED_COLORS_DIM) + x2) * BLENDED_COLORS_DIM) + z2;
-        int color = this.blendedColorsXYZ[index];
-
-        if (color == -1) {
-            this.blendedColorsXYZ[index] = color = this.calculateBlendedColor(pos.getX(), pos.getY(), pos.getZ());
+        if (buffers == null) {
+            this.cache[relY] = (buffers = this.createColorBuffers(relY));
         }
 
-        return color;
+        return buffers[source.ordinal()]
+                .getARGB(relX, relZ);
     }
 
-    private int calculateBlendedColor(int posX, int posY, int posZ) {
-        if (this.radius == 0) {
-            return this.getColor(posX, posY, posZ);
+    private ColorBuffer[] createColorBuffers(int y) {
+        ColorBuffer[] buffers = new ColorBuffer[BiomeColorSource.COUNT];
+
+        for (int i = 0; i < BiomeColorSource.COUNT; i++) {
+            buffers[i] = new ColorBuffer(this.length, this.length);
         }
 
-        int r = 0;
-        int g = 0;
-        int b = 0;
+        ColorBuffer bufGrass = buffers[BiomeColorSource.GRASS.ordinal()];
+        ColorBuffer bufFoliage = buffers[BiomeColorSource.FOLIAGE.ordinal()];
+        ColorBuffer bufWater = buffers[BiomeColorSource.WATER.ordinal()];
 
-        int minY = posY - this.radius;
+        for (int z = 0; z < this.length; z++) {
+            for (int x = 0; x < this.length; x++) {
+                Biome biome = this.slice.getBiome(this.minCoord + x, this.minCoord + y, this.minCoord + z);
 
-        int maxY = posY + this.radius;
+                int index = (z * this.length) + x;
 
-        // Blend across the Y axis using colours blended across both the X axis and Z axis.
-        for (int y2 = minY; y2 <= maxY; y2++) {
-            int color = this.getBlendedColorXZ(posX, y2, posZ);
-
-            r += ColorARGB.unpackRed(color);
-            g += ColorARGB.unpackGreen(color);
-            b += ColorARGB.unpackBlue(color);
+                bufGrass.setARGB(index, biome.getGrassColorAt(this.originX + x, this.originZ + z));
+                bufFoliage.setARGB(index, biome.getFoliageColor());
+                bufWater.setARGB(index, biome.getWaterColor());
+            }
         }
 
-        return ColorARGB.pack(r / this.diameter,g / this.diameter, b / this.diameter, 255);
-    }
 
-    private int getBlendedColorXZ(int x, int y, int z) {
-
-        // Colours have not been blended on the Y axis
-        int x2 = x - this.blendedColorsMinX;
-        int y2 = y - this.minY;
-        int z2 = z - this.blendedColorsMinZ;
-
-        int index = (((y2 * BLENDED_COLORS_DIM) + x2) * BLENDED_COLORS_DIM) + z2;
-        int color = this.blendedColorsXZ[index];
-
-        if (color == -1) {
-            this.blendedColorsXZ[index] = color = this.calculateBlendedColorXZ(x, y, z);
+        if (this.blendDistance > 0) {
+            for (ColorBuffer buffer : buffers) {
+                BoxBlur.blur(buffer, this.blendDistance);
+            }
         }
 
-        return color;
-    }
-
-    private int calculateBlendedColorXZ(int posX, int posY, int posZ) {
-
-        int r = 0;
-        int g = 0;
-        int b = 0;
-
-        int minX = posX - this.radius;
-
-        int maxX = posX + this.radius;
-
-        // Blend across the X axis using colours blended across the Z axis.
-        for (int x2 = minX; x2 <= maxX; x2++) {
-            int color = this.getBlendedColorZ(x2, posY, posZ);
-
-            r += ColorARGB.unpackRed(color);
-            g += ColorARGB.unpackGreen(color);
-            b += ColorARGB.unpackBlue(color);
-        }
-
-        return ColorARGB.pack(r / this.diameter, g / this.diameter, b / this.diameter, 255);
-    }
-
-    private int getBlendedColorZ(int x, int y, int z) {
-
-        // Colours have not been blended on the X and Y axis.
-        int x2 = x - this.minX;
-        int y2 = y - this.minY;
-        int z2 = z - this.blendedColorsMinZ;
-
-        int index = (((y2 * this.dim) + x2) * BLENDED_COLORS_DIM) + z2;
-        int color = this.blendedColorsZ[index];
-
-        if (color == -1) {
-            this.blendedColorsZ[index] = color = this.calculateBlendedColorZ(x, y, z);
-        }
-
-        return color;
-    }
-    private int calculateBlendedColorZ(int posX, int posY, int posZ) {
-
-        int r = 0;
-        int g = 0;
-        int b = 0;
-
-        int minZ = posZ - this.radius;
-
-        int maxZ = posZ + this.radius;
-
-        // Blend across the Z axis using colours that have not been blended.
-        for (int z2 = minZ; z2 <= maxZ; z2++) {
-            int color = this.getColor(posX, posY, z2);
-
-            r += ColorARGB.unpackRed(color);
-            g += ColorARGB.unpackGreen(color);
-            b += ColorARGB.unpackBlue(color);
-        }
-
-        return ColorARGB.pack(r / this.diameter, g / this.diameter, b / this.diameter, 255);
-    }
-
-    private int getColor(int x, int y, int z) {
-
-        int x2 = x - this.minX;
-        int y2 = y - this.minY;
-        int z2 = z - this.minZ;
-
-        int index = (((y2 * this.dim) + x2) * this.dim) + z2;
-        int color = this.cache[index];
-
-        if (color == -1) {
-            this.cache[index] = color = this.calculateColor(x, y, z);
-        }
-
-        return color;
-    }
-
-    private int calculateColor(int x, int y, int z) {
-        return this.resolver.getColor(this.slice.getBiome(x, y, z), x, z);
+        return buffers;
     }
 }

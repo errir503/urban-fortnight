@@ -29,6 +29,7 @@ public class SodiumConfig {
         this.addMixinRule("core", true); // TODO: Don't actually allow the user to disable this
 
         this.addMixinRule("features.block", true);
+        this.addMixinRule("features.biome", true);
         this.addMixinRule("features.buffer_builder", true);
         this.addMixinRule("features.buffer_builder.fast_advance", true);
         this.addMixinRule("features.buffer_builder.fast_sort", true);
@@ -57,7 +58,7 @@ public class SodiumConfig {
         this.addMixinRule("features.texture_updates", true);
         this.addMixinRule("features.world_ticking", true);
         this.addMixinRule("features.fast_biome_colors", true);
-        this.addMixinRule("features.shader", true);
+        this.addMixinRule("features.shaders", true);
         this.addMixinRule("features.clouds", true);
 
         this.addMixinRule("workarounds", true);

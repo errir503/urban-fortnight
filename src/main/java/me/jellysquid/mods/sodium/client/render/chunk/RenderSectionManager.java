@@ -12,6 +12,7 @@ import me.jellysquid.mods.sodium.client.gl.device.CommandList;
 import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
 import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderList;
 import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderListBuilder;
+import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegion;
 import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
 import me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer;
@@ -77,7 +78,7 @@ public class RenderSectionManager {
     private final ObjectList<RenderSection> tickableChunks = new ObjectArrayList<>();
     private final ObjectList<BlockEntity> visibleBlockEntities = new ObjectArrayList<>();
 
-    private final RegionChunkRenderer chunkRenderer;
+    private final ChunkRenderer chunkRenderer;
 
     private final SodiumWorldRenderer worldRenderer;
     private final ClientWorld world;
@@ -274,6 +275,11 @@ public class RenderSectionManager {
             throw new IllegalStateException("Chunk is not loaded: " + ChunkSectionPos.from(x, y, z));
         }
 
+        RenderRegion region = this.regions.getRegion(RenderRegion.getRegionKeyForChunk(x, y, z));
+        if (region != null) {
+            region.deleteSection(chunk);
+        }
+
         chunk.delete();
 
         this.disconnectNeighborNodes(chunk);
@@ -446,9 +452,9 @@ public class RenderSectionManager {
 
         try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
             this.regions.delete(commandList);
+            this.chunkRenderer.delete(commandList);
         }
 
-        this.chunkRenderer.delete();
         this.builder.stopWorkers();
     }
 
