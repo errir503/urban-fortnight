@@ -2,12 +2,11 @@ package me.jellysquid.mods.sodium.client.render.chunk;
 
 import me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildResult;
-import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderBounds;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
-import me.jellysquid.mods.sodium.client.render.chunk.graph.ChunkGraphInfo;
 import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegion;
 import me.jellysquid.mods.sodium.client.render.texture.SpriteUtil;
-import me.jellysquid.mods.sodium.common.util.DirectionUtil;
+import me.jellysquid.mods.sodium.client.render.viewport.Viewport;
+import me.jellysquid.mods.sodium.client.util.DirectionUtil;
 import net.minecraft.client.render.chunk.ChunkOcclusionData;
 import net.minecraft.client.texture.Sprite;
 import net.minecraft.util.math.BlockPos;
@@ -21,13 +20,13 @@ import java.util.concurrent.CompletableFuture;
  * data about the render in the chunk visibility graph.
  */
 public class RenderSection {
+    private static final long DEFAULT_VISIBILITY_DATA = calculateVisibilityData(ChunkRenderData.EMPTY.getOcclusionData());
+
     private final SodiumWorldRenderer worldRenderer;
     private final int chunkX, chunkY, chunkZ;
 
-    private final ChunkGraphInfo graphInfo;
     private final int chunkId;
     private final long regionId;
-
 
     private final RenderSection[] adjacent = new RenderSection[DirectionUtil.ALL_DIRECTIONS.length];
 
@@ -43,6 +42,11 @@ public class RenderSection {
 
     private int flags;
 
+    private int lastVisibleFrame = -1;
+
+    private long visibilityData;
+    private byte cullingState;
+
     public RenderSection(SodiumWorldRenderer worldRenderer, int chunkX, int chunkY, int chunkZ) {
         this.worldRenderer = worldRenderer;
 
@@ -50,23 +54,23 @@ public class RenderSection {
         this.chunkY = chunkY;
         this.chunkZ = chunkZ;
 
-        this.graphInfo = new ChunkGraphInfo(this);
-
         int rX = this.getChunkX() & (RenderRegion.REGION_WIDTH - 1);
         int rY = this.getChunkY() & (RenderRegion.REGION_HEIGHT - 1);
         int rZ = this.getChunkZ() & (RenderRegion.REGION_LENGTH - 1);
 
         this.chunkId = RenderRegion.getChunkIndex(rX, rY, rZ);
         this.regionId = RenderRegion.getRegionKeyForChunk(this.chunkX, this.chunkY, this.chunkZ);
+
+        this.visibilityData = DEFAULT_VISIBILITY_DATA;
     }
 
 
-    public RenderSection getAdjacent(Direction dir) {
-        return this.adjacent[dir.ordinal()];
+    public RenderSection getAdjacent(int direction) {
+        return this.adjacent[direction];
     }
 
-    public void setAdjacentNode(Direction dir, RenderSection node) {
-        this.adjacent[dir.ordinal()] = node;
+    public void setAdjacentNode(int direction, RenderSection node) {
+        this.adjacent[direction] = node;
     }
 
     /**
@@ -154,17 +158,17 @@ public class RenderSection {
      * @return The squared distance from the center of this chunk in the world to the center of the block position
      * given by {@param pos}
      */
-    public double getSquaredDistance(BlockPos pos) {
-        return this.getSquaredDistance(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+    public float getSquaredDistance(BlockPos pos) {
+        return this.getSquaredDistance(pos.getX() + 0.5f, pos.getY() + 0.5f, pos.getZ() + 0.5f);
     }
 
     /**
      * @return The squared distance from the center of this chunk in the world to the given position
      */
-    public double getSquaredDistance(double x, double y, double z) {
-        double xDist = x - this.getCenterX();
-        double yDist = y - this.getCenterY();
-        double zDist = z - this.getCenterZ();
+    public float getSquaredDistance(float x, float y, float z) {
+        float xDist = x - this.getCenterX();
+        float yDist = y - this.getCenterY();
+        float zDist = z - this.getCenterZ();
 
         return (xDist * xDist) + (yDist * yDist) + (zDist * zDist);
     }
@@ -172,32 +176,22 @@ public class RenderSection {
     /**
      * @return The x-coordinate of the center position of this chunk render
      */
-    private double getCenterX() {
-        return this.getOriginX() + 8.0D;
+    private int getCenterX() {
+        return this.getOriginX() + 8;
     }
 
     /**
      * @return The y-coordinate of the center position of this chunk render
      */
-    private double getCenterY() {
-        return this.getOriginY() + 8.0D;
+    private int getCenterY() {
+        return this.getOriginY() + 8;
     }
 
     /**
      * @return The z-coordinate of the center position of this chunk render
      */
-    private double getCenterZ() {
-        return this.getOriginZ() + 8.0D;
-    }
-
-    /**
-     * @return The squared distance from the center of this chunk in the world to the given position
-     */
-    public double getSquaredDistanceXZ(double x, double z) {
-        double xDist = x - this.getCenterX();
-        double zDist = z - this.getCenterZ();
-
-        return (xDist * xDist) + (zDist * zDist);
+    private int getCenterZ() {
+        return this.getOriginZ() + 8;
     }
 
     public int getChunkX() {
@@ -212,10 +206,6 @@ public class RenderSection {
         return this.chunkZ;
     }
 
-    public ChunkRenderBounds getBounds() {
-        return this.data.getBounds();
-    }
-
     public boolean isTickable() {
         return this.tickable;
     }
@@ -228,14 +218,6 @@ public class RenderSection {
     public String toString() {
         return String.format("RenderChunk{chunkX=%d, chunkY=%d, chunkZ=%d}",
                 this.chunkX, this.chunkY, this.chunkZ);
-    }
-
-    public ChunkGraphInfo getGraphInfo() {
-        return this.graphInfo;
-    }
-
-    public void setOcclusionData(ChunkOcclusionData occlusionData) {
-        this.graphInfo.setOcclusionData(occlusionData);
     }
 
     public ChunkUpdateType getPendingUpdate() {
@@ -277,5 +259,59 @@ public class RenderSection {
 
     public long getRegionId() {
         return this.regionId;
+    }
+
+    public void setLastVisibleFrame(int frame) {
+        this.lastVisibleFrame = frame;
+    }
+
+    public int getLastVisibleFrame() {
+        return this.lastVisibleFrame;
+    }
+
+    public void setOcclusionData(ChunkOcclusionData occlusionData) {
+        this.visibilityData = calculateVisibilityData(occlusionData);
+    }
+
+    private static long calculateVisibilityData(ChunkOcclusionData occlusionData) {
+        long visibilityData = 0;
+
+        for (Direction from : DirectionUtil.ALL_DIRECTIONS) {
+            for (Direction to : DirectionUtil.ALL_DIRECTIONS) {
+                if (occlusionData == null || occlusionData.isVisibleThrough(from, to)) {
+                    visibilityData |= (1L << ((from.ordinal() << 3) + to.ordinal()));
+                }
+            }
+        }
+
+        return visibilityData;
+    }
+
+    public boolean isVisibleThrough(int from, int to) {
+        return ((this.visibilityData & (1L << ((from << 3) + to))) != 0L);
+    }
+
+    public void setCullingState(byte parent, int dir) {
+        this.cullingState = (byte) (parent | (1 << dir));
+    }
+
+    public boolean canCull(int direction) {
+        return (this.cullingState & 1 << direction) != 0;
+    }
+
+    public byte getCullingState() {
+        return this.cullingState;
+    }
+
+    public void resetCullingState() {
+        this.cullingState = 0;
+    }
+
+    public boolean isInsideViewport(Viewport viewport) {
+        float x = this.getOriginX();
+        float y = this.getOriginY();
+        float z = this.getOriginZ();
+
+        return !viewport.isBoxVisible(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f);
     }
 }

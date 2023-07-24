@@ -10,28 +10,28 @@ import it.unimi.dsi.fastutil.objects.ObjectList;
 import me.jellysquid.mods.sodium.client.SodiumClientMod;
 import me.jellysquid.mods.sodium.client.gl.device.CommandList;
 import me.jellysquid.mods.sodium.client.gl.device.RenderDevice;
-import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderList;
-import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderListBuilder;
-import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegion;
-import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
-import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
 import me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildResult;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuilder;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
-import me.jellysquid.mods.sodium.client.render.chunk.graph.ChunkGraphInfo;
 import me.jellysquid.mods.sodium.client.render.chunk.graph.ChunkGraphIterationQueue;
+import me.jellysquid.mods.sodium.client.render.chunk.graph.GraphDirection;
+import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderList;
+import me.jellysquid.mods.sodium.client.render.chunk.lists.ChunkRenderListBuilder;
+import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegion;
 import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegionManager;
 import me.jellysquid.mods.sodium.client.render.chunk.tasks.ChunkRenderBuildTask;
 import me.jellysquid.mods.sodium.client.render.chunk.tasks.ChunkRenderEmptyBuildTask;
 import me.jellysquid.mods.sodium.client.render.chunk.tasks.ChunkRenderRebuildTask;
+import me.jellysquid.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
+import me.jellysquid.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
+import me.jellysquid.mods.sodium.client.render.viewport.Viewport;
+import me.jellysquid.mods.sodium.client.util.DirectionUtil;
 import me.jellysquid.mods.sodium.client.util.MathUtil;
-import me.jellysquid.mods.sodium.client.util.frustum.Frustum;
+import me.jellysquid.mods.sodium.client.util.collections.WorkStealingFutureDrain;
 import me.jellysquid.mods.sodium.client.world.WorldSlice;
 import me.jellysquid.mods.sodium.client.world.cloned.ChunkRenderContext;
 import me.jellysquid.mods.sodium.client.world.cloned.ClonedChunkSectionCache;
-import me.jellysquid.mods.sodium.common.util.DirectionUtil;
-import me.jellysquid.mods.sodium.common.util.collections.WorkStealingFutureDrain;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
@@ -49,20 +49,6 @@ public class RenderSectionManager {
      * The maximum distance a chunk can be from the player's camera in order to be eligible for blocking updates.
      */
     private static final double NEARBY_CHUNK_DISTANCE = Math.pow(32, 2.0);
-
-    /**
-     * The minimum distance the culling plane can be from the player's camera. This helps to prevent mathematical
-     * errors that occur when the fog distance is less than 8 blocks in width, such as when using a blindness potion.
-     */
-    private static final float FOG_PLANE_MIN_DISTANCE = (float) Math.pow(8.0f, 2.0);
-
-    /**
-     * The distance past the fog's far plane at which to begin culling. Distance calculations use the center of each
-     * chunk from the camera's position, and as such, special care is needed to ensure that the culling plane is pushed
-     * back far enough. I'm sure there's a mathematical formula that should be used here in place of the constant,
-     * but this value works fine in testing.
-     */
-    private static final float FOG_PLANE_OFFSET = 12.0f;
 
     private final ChunkBuilder builder;
 
@@ -84,18 +70,16 @@ public class RenderSectionManager {
     private final ClientWorld world;
 
     private final int renderDistance;
+    private int effectiveRenderDistance;
 
     private float cameraX, cameraY, cameraZ;
-    private int centerChunkX, centerChunkZ;
+    private int centerChunkX, centerChunkY, centerChunkZ;
 
     private boolean needsUpdate;
 
-    private boolean useFogCulling;
     private boolean useOcclusionCulling;
 
-    private double fogRenderCutoff;
-
-    private Frustum frustum;
+    private Viewport viewport;
 
     private int currentFrame = 0;
     private boolean alwaysDeferChunkUpdates;
@@ -131,13 +115,13 @@ public class RenderSectionManager {
                 .forEach(pos -> this.onChunkAdded(ChunkPos.getPackedX(pos), ChunkPos.getPackedZ(pos)));
     }
 
-    public void update(Camera camera, Frustum frustum, int frame, boolean spectator) {
+    public void update(Camera camera, Viewport viewport, int frame, boolean spectator) {
         this.resetLists();
 
         var list = new ChunkRenderListBuilder();
 
         this.setup(camera);
-        this.iterateChunks(list, camera, frustum, frame, spectator);
+        this.iterateChunks(list, camera, viewport, frame, spectator);
 
         this.chunkRenderList = list.build();
         this.needsUpdate = false;
@@ -152,47 +136,40 @@ public class RenderSectionManager {
 
         var options = SodiumClientMod.options();
 
-        this.useFogCulling = options.performance.useFogOcclusion;
         this.alwaysDeferChunkUpdates = options.performance.alwaysDeferChunkUpdates;
-
-        if (this.useFogCulling) {
-            float dist = RenderSystem.getShaderFogEnd() + FOG_PLANE_OFFSET;
-
-            if (dist == 0.0f) {
-                this.fogRenderCutoff = Double.POSITIVE_INFINITY;
-            } else {
-                this.fogRenderCutoff = Math.max(FOG_PLANE_MIN_DISTANCE, dist * dist);
-            }
-        }
     }
 
-    private void iterateChunks(ChunkRenderListBuilder list, Camera camera, Frustum frustum, int frame, boolean spectator) {
-        this.initSearch(list, camera, frustum, frame, spectator);
+    private void iterateChunks(ChunkRenderListBuilder list, Camera camera, Viewport viewport, int frame, boolean spectator) {
+        this.initSearch(list, camera, viewport, frame, spectator);
 
         ChunkGraphIterationQueue queue = this.iterationQueue;
 
         for (int i = 0; i < queue.size(); i++) {
             RenderSection section = queue.getRender(i);
-            Direction flow = queue.getDirection(i);
+            int incomingDirection = queue.getDirection(i);
 
             this.schedulePendingUpdates(section);
 
-            for (Direction dir : DirectionUtil.ALL_DIRECTIONS) {
-                if (this.isCulled(section.getGraphInfo(), flow, dir)) {
+            for (int outgoingDirection = 0; outgoingDirection < GraphDirection.COUNT; outgoingDirection++) {
+                if (this.isCulled(section, incomingDirection, outgoingDirection)) {
                     continue;
                 }
 
-                RenderSection adj = section.getAdjacent(dir);
+                RenderSection adj = section.getAdjacent(outgoingDirection);
 
                 if (adj != null && this.isWithinRenderDistance(adj)) {
-                    this.bfsEnqueue(list, section, adj, DirectionUtil.getOpposite(dir));
+                    this.bfsEnqueue(list, section, adj, GraphDirection.opposite(outgoingDirection));
                 }
             }
         }
     }
 
     private void schedulePendingUpdates(RenderSection section) {
-        if (section.getPendingUpdate() == null || !this.tracker.hasMergedFlags(section.getChunkX(), section.getChunkZ(), ChunkStatus.FLAG_ALL)) {
+        if (section.getPendingUpdate() == null) {
+            return;
+        }
+
+        if (!this.tracker.hasMergedFlags(section.getChunkX(), section.getChunkZ(), ChunkStatus.FLAG_ALL)) {
             return;
         }
 
@@ -311,8 +288,7 @@ public class RenderSectionManager {
             return false;
         }
 
-        return render.getGraphInfo()
-                .getLastVisibleFrame() == this.currentFrame;
+        return render.getLastVisibleFrame() == this.currentFrame;
     }
 
     public void updateChunks() {
@@ -496,23 +472,30 @@ public class RenderSectionManager {
 
     private boolean isWithinRenderDistance(RenderSection adj) {
         int x = Math.abs(adj.getChunkX() - this.centerChunkX);
+        int y = Math.abs(adj.getChunkY() - this.centerChunkY);
         int z = Math.abs(adj.getChunkZ() - this.centerChunkZ);
 
-        return x <= this.renderDistance && z <= this.renderDistance;
+        return Math.max(x, Math.max(y, z)) <= this.effectiveRenderDistance;
     }
 
-    private boolean isCulled(ChunkGraphInfo node, Direction from, Direction to) {
-        if (node.canCull(to)) {
+    private boolean isCulled(RenderSection section, int incoming, int outgoing) {
+        if (section.canCull(outgoing)) {
             return true;
         }
 
-        return this.useOcclusionCulling && from != null && !node.isVisibleThrough(from, to);
+        return this.useOcclusionCulling && incoming != GraphDirection.NONE && !section.isVisibleThrough(incoming, outgoing);
     }
 
-    private void initSearch(ChunkRenderListBuilder list, Camera camera, Frustum frustum, int frame, boolean spectator) {
+    private void initSearch(ChunkRenderListBuilder list, Camera camera, Viewport viewport, int frame, boolean spectator) {
         this.currentFrame = frame;
-        this.frustum = frustum;
+        this.viewport = viewport;
         this.useOcclusionCulling = MinecraftClient.getInstance().chunkCullingEnabled;
+
+        if (SodiumClientMod.options().performance.useFogOcclusion) {
+            this.effectiveRenderDistance = Math.min(this.getEffectiveViewDistance(), this.renderDistance);
+        } else {
+            this.effectiveRenderDistance = this.renderDistance;
+        }
 
         this.iterationQueue.clear();
 
@@ -523,41 +506,35 @@ public class RenderSectionManager {
         int chunkZ = origin.getZ() >> 4;
 
         this.centerChunkX = chunkX;
+        this.centerChunkY = chunkY;
         this.centerChunkZ = chunkZ;
 
         RenderSection rootRender = this.getRenderSection(chunkX, chunkY, chunkZ);
 
         if (rootRender != null) {
-            ChunkGraphInfo rootInfo = rootRender.getGraphInfo();
-            rootInfo.resetCullingState();
-            rootInfo.setLastVisibleFrame(frame);
+            rootRender.resetCullingState();
+            rootRender.setLastVisibleFrame(frame);
 
             if (spectator && this.world.getBlockState(origin).isOpaqueFullCube(this.world, origin)) {
                 this.useOcclusionCulling = false;
             }
 
-            this.addVisible(list, rootRender, null);
+            this.addVisible(list, rootRender, GraphDirection.NONE);
         } else {
             chunkY = MathHelper.clamp(origin.getY() >> 4, this.world.getBottomSectionCoord(), this.world.getTopSectionCoord() - 1);
 
             List<RenderSection> sorted = new ArrayList<>();
 
-            for (int x2 = -this.renderDistance; x2 <= this.renderDistance; ++x2) {
-                for (int z2 = -this.renderDistance; z2 <= this.renderDistance; ++z2) {
+            for (int x2 = -this.effectiveRenderDistance; x2 <= this.effectiveRenderDistance; ++x2) {
+                for (int z2 = -this.effectiveRenderDistance; z2 <= this.effectiveRenderDistance; ++z2) {
                     RenderSection render = this.getRenderSection(chunkX + x2, chunkY, chunkZ + z2);
 
-                    if (render == null) {
+                    if (render == null || render.isInsideViewport(viewport)) {
                         continue;
                     }
 
-                    ChunkGraphInfo info = render.getGraphInfo();
-
-                    if (info.isCulledByFrustum(frustum)) {
-                        continue;
-                    }
-
-                    info.resetCullingState();
-                    info.setLastVisibleFrame(frame);
+                    render.resetCullingState();
+                    render.setLastVisibleFrame(frame);
 
                     sorted.add(render);
                 }
@@ -566,35 +543,41 @@ public class RenderSectionManager {
             sorted.sort(Comparator.comparingDouble(node -> node.getSquaredDistance(origin)));
 
             for (RenderSection render : sorted) {
-                this.addVisible(list, render, null);
+                this.addVisible(list, render, GraphDirection.NONE);
             }
         }
     }
 
+    private int getEffectiveViewDistance() {
+        var color = RenderSystem.getShaderFogColor();
+        var distance = RenderSystem.getShaderFogEnd();
 
-    private void bfsEnqueue(ChunkRenderListBuilder list, RenderSection parent, RenderSection render, Direction flow) {
-        ChunkGraphInfo info = render.getGraphInfo();
-
-        if (info.getLastVisibleFrame() == this.currentFrame) {
-            return;
+        // The fog must be fully opaque in order to skip rendering of chunks behind it
+        if (!MathHelper.approximatelyEquals(color[3], 1.0f)) {
+            return this.renderDistance;
         }
 
-        if (info.isCulledByFrustum(this.frustum)) {
-            return;
-        }
-
-        info.setLastVisibleFrame(this.currentFrame);
-        info.setCullingState(parent.getGraphInfo().getCullingState(), flow);
-
-        this.addVisible(list, render, flow);
+        return MathHelper.floor(distance) >> 4;
     }
 
-    private void addVisible(ChunkRenderListBuilder list, RenderSection render, Direction flow) {
-        this.iterationQueue.add(render, flow);
 
-        if (this.useFogCulling && render.getSquaredDistanceXZ(this.cameraX, this.cameraZ) >= this.fogRenderCutoff) {
+    private void bfsEnqueue(ChunkRenderListBuilder list, RenderSection parent, RenderSection render, int incomingDirection) {
+        if (render.getLastVisibleFrame() == this.currentFrame) {
             return;
         }
+
+        if (render.isInsideViewport(this.viewport)) {
+            return;
+        }
+
+        render.setLastVisibleFrame(this.currentFrame);
+        render.setCullingState(parent.getCullingState(), incomingDirection);
+
+        this.addVisible(list, render, incomingDirection);
+    }
+
+    private void addVisible(ChunkRenderListBuilder list, RenderSection render, int incomingDirection) {
+        this.iterationQueue.add(render, incomingDirection);
 
         int flags = render.getFlags();
 
@@ -608,25 +591,25 @@ public class RenderSectionManager {
     }
 
     private void connectNeighborNodes(RenderSection render) {
-        for (Direction dir : DirectionUtil.ALL_DIRECTIONS) {
-            RenderSection adj = this.getRenderSection(render.getChunkX() + dir.getOffsetX(),
-                    render.getChunkY() + dir.getOffsetY(),
-                    render.getChunkZ() + dir.getOffsetZ());
+        for (int direction = 0; direction < GraphDirection.COUNT; direction++) {
+            RenderSection adj = this.getRenderSection(render.getChunkX() + GraphDirection.x(direction),
+                    render.getChunkY() + GraphDirection.y(direction),
+                    render.getChunkZ() + GraphDirection.z(direction));
 
             if (adj != null) {
-                adj.setAdjacentNode(DirectionUtil.getOpposite(dir), render);
-                render.setAdjacentNode(dir, adj);
+                adj.setAdjacentNode(GraphDirection.opposite(direction), render);
+                render.setAdjacentNode(direction, adj);
             }
         }
     }
 
     private void disconnectNeighborNodes(RenderSection render) {
-        for (Direction dir : DirectionUtil.ALL_DIRECTIONS) {
-            RenderSection adj = render.getAdjacent(dir);
+        for (int direction = 0; direction < GraphDirection.COUNT; direction++) {
+            RenderSection adj = render.getAdjacent(direction);
 
             if (adj != null) {
-                adj.setAdjacentNode(DirectionUtil.getOpposite(dir), null);
-                render.setAdjacentNode(dir, null);
+                adj.setAdjacentNode(GraphDirection.opposite(direction), null);
+                render.setAdjacentNode(direction, null);
             }
         }
     }
