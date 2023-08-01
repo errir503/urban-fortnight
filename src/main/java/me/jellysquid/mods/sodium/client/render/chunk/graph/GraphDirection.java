@@ -1,8 +1,8 @@
 package me.jellysquid.mods.sodium.client.render.chunk.graph;
 
-public class GraphDirection {
-    public static final int NONE    = -1;
+import net.minecraft.util.math.Direction;
 
+public class GraphDirection {
     public static final int DOWN    = 0;
     public static final int UP      = 1;
     public static final int NORTH   = 2;
@@ -13,6 +13,10 @@ public class GraphDirection {
 
     public static final int COUNT   = 6;
 
+    public static final int NONE    = 0b000000;
+    public static final int ALL     = 0b111111;
+
+    private static final Direction[] ENUMS;
     private static final int[] OPPOSITE;
     private static final int[] X, Y, Z;
 
@@ -36,6 +40,14 @@ public class GraphDirection {
         Z = new int[COUNT];
         Z[NORTH] = -1;
         Z[SOUTH] = 1;
+
+        ENUMS = new Direction[COUNT];
+        ENUMS[DOWN] = Direction.DOWN;
+        ENUMS[UP] = Direction.UP;
+        ENUMS[NORTH] = Direction.NORTH;
+        ENUMS[SOUTH] = Direction.SOUTH;
+        ENUMS[WEST] = Direction.WEST;
+        ENUMS[EAST] = Direction.EAST;
     }
 
     public static int opposite(int direction) {
@@ -52,5 +64,9 @@ public class GraphDirection {
 
     public static int z(int direction) {
         return Z[direction];
+    }
+
+    public static Direction toEnum(int direction) {
+        return ENUMS[direction];
     }
 }
