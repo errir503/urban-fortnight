@@ -3,77 +3,109 @@ package me.jellysquid.mods.sodium.client.world.cloned;
 import it.unimi.dsi.fastutil.ints.Int2ReferenceMap;
 import it.unimi.dsi.fastutil.ints.Int2ReferenceMaps;
 import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
-import me.jellysquid.mods.sodium.client.world.cloned.palette.ClonedPalette;
-import me.jellysquid.mods.sodium.client.world.cloned.palette.ClonedPaletteFallback;
-import me.jellysquid.mods.sodium.client.world.cloned.palette.ClonedPalleteArray;
-import me.jellysquid.mods.sodium.mixin.core.world.chunk.PalettedContainerAccessor;
-import net.fabricmc.fabric.api.rendering.data.v1.RenderAttachmentBlockEntity;
-import net.minecraft.block.Block;
+import me.jellysquid.mods.sodium.client.world.ReadableContainerExtended;
+import me.jellysquid.mods.sodium.client.world.WorldSlice;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.util.collection.PackedIntegerArray;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.world.LightType;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
-import net.minecraft.world.chunk.*;
+import net.minecraft.world.chunk.ChunkNibbleArray;
+import net.minecraft.world.chunk.ChunkSection;
+import net.minecraft.world.chunk.ReadableContainer;
+import net.minecraft.world.chunk.WorldChunk;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.EnumMap;
 import java.util.Map;
 
 public class ClonedChunkSection {
-    private static final LightType[] LIGHT_TYPES = LightType.values();
-
-    private Int2ReferenceMap<BlockEntity> blockEntities;
-    private Int2ReferenceMap<Object> blockEntityAttachments;
-
-    private final ChunkNibbleArray[] lightDataArrays = new ChunkNibbleArray[LIGHT_TYPES.length];
+    private static final ChunkNibbleArray DEFAULT_SKY_LIGHT_ARRAY = new ChunkNibbleArray(15);
+    private static final ChunkNibbleArray DEFAULT_BLOCK_LIGHT_ARRAY = new ChunkNibbleArray(0);
 
     private final ChunkSectionPos pos;
 
-    private PackedIntegerArray blockStateData;
-    private ClonedPalette<BlockState> blockStatePalette;
+    private final @Nullable Int2ReferenceMap<BlockEntity> blockEntityMap;
+    private final @Nullable Int2ReferenceMap<Object> blockEntityRenderDataMap;
 
-    private ReadableContainer<RegistryEntry<Biome>> biomeData;
+    private final @Nullable ChunkNibbleArray[] lightDataArrays;
+
+    private final @Nullable ReadableContainer<BlockState> blockData;
+
+    private final @Nullable ReadableContainer<RegistryEntry<Biome>> biomeData;
 
     private long lastUsedTimestamp = Long.MAX_VALUE;
 
-    public ClonedChunkSection(World world, WorldChunk chunk, ChunkSection section, ChunkSectionPos pos) {
+    public ClonedChunkSection(World world, WorldChunk chunk, @Nullable ChunkSection section, ChunkSectionPos pos) {
         this.pos = pos;
 
-        this.copyBlockData(section);
-        this.copyLightData(world);
-        this.copyBiomeData(section);
-        this.copyBlockEntities(chunk, pos);
-    }
+        ReadableContainer<BlockState> blockData = null;
+        ReadableContainer<RegistryEntry<Biome>> biomeData = null;
 
-    private void copyBlockData(ChunkSection section) {
-        PalettedContainer.Data<BlockState> container = ((PalettedContainerAccessor<BlockState>) section.getBlockStateContainer()).getData();
+        Int2ReferenceMap<BlockEntity> blockEntityMap = null;
+        Int2ReferenceMap<Object> blockEntityRenderDataMap = null;
 
-        this.blockStateData = copyBlockData(container);
-        this.blockStatePalette = copyPalette(container);
-    }
+        if (section != null) {
+            if (!section.isEmpty()) {
+                blockData = ReadableContainerExtended.clone(section.getBlockStateContainer());
+                blockEntityMap = copyBlockEntities(chunk, pos);
 
-    private void copyLightData(World world) {
-        for (LightType type : LIGHT_TYPES) {
-            this.lightDataArrays[type.ordinal()] = world.getLightingProvider()
-                    .get(type)
-                    .getLightSection(this.pos);
+                if (blockEntityMap != null) {
+                    blockEntityRenderDataMap = copyBlockEntityRenderData(blockEntityMap);
+                }
+            }
+
+            biomeData = ReadableContainerExtended.clone(section.getBiomeContainer());
         }
+
+        this.blockData = blockData;
+        this.biomeData = biomeData;
+
+        this.blockEntityMap = blockEntityMap;
+        this.blockEntityRenderDataMap = blockEntityRenderDataMap;
+
+        this.lightDataArrays = copyLightData(world, pos);
     }
 
-    private void copyBiomeData(ChunkSection section) {
-        this.biomeData = section.getBiomeContainer();
+    @NotNull
+    private static ChunkNibbleArray[] copyLightData(World world, ChunkSectionPos pos) {
+        var arrays = new ChunkNibbleArray[2];
+        arrays[LightType.BLOCK.ordinal()] = copyLightArray(world, LightType.BLOCK, pos);
+
+        // Dimensions without sky-light should not have a default-initialized array
+        if (world.getDimension().hasSkyLight()) {
+            arrays[LightType.SKY.ordinal()] = copyLightArray(world, LightType.SKY, pos);
+        }
+
+        return arrays;
     }
 
-    public ChunkNibbleArray getLightArray(LightType type) {
-        return this.lightDataArrays[type.ordinal()];
+    /**
+     * Copies the light data array for the given light type for this chunk, or returns a default-initialized value if
+     * the light array is not loaded.
+     */
+    @NotNull
+    private static ChunkNibbleArray copyLightArray(World world, LightType type, ChunkSectionPos pos) {
+        var array = world.getLightingProvider()
+                .get(type)
+                .getLightSection(pos);
+
+        if (array == null) {
+            array = switch (type) {
+                case SKY -> DEFAULT_SKY_LIGHT_ARRAY;
+                case BLOCK -> DEFAULT_BLOCK_LIGHT_ARRAY;
+            };
+        }
+
+        return array;
     }
 
-    private void copyBlockEntities(WorldChunk chunk, ChunkSectionPos chunkCoord) {
+    @Nullable
+    private static Int2ReferenceMap<BlockEntity> copyBlockEntities(WorldChunk chunk, ChunkSectionPos chunkCoord) {
         BlockBox box = new BlockBox(chunkCoord.getMinX(), chunkCoord.getMinY(), chunkCoord.getMinZ(),
                 chunkCoord.getMaxX(), chunkCoord.getMaxY(), chunkCoord.getMaxZ());
 
@@ -89,103 +121,66 @@ public class ClonedChunkSection {
                     blockEntities = new Int2ReferenceOpenHashMap<>();
                 }
 
-                blockEntities.put(packLocal(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15), entity);
+                blockEntities.put(WorldSlice.getLocalBlockIndex(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15), entity);
             }
         }
 
-        this.blockEntities = blockEntities != null ? blockEntities : Int2ReferenceMaps.emptyMap();
+        if (blockEntities != null) {
+            blockEntities.trim();
+        }
 
-        Int2ReferenceOpenHashMap<Object> blockEntityAttachments = null;
+        return blockEntities;
+    }
 
-        // Retrieve any render attachments after we have copied all block entities, as this will call into the code of
+    @Nullable
+    private static Int2ReferenceMap<Object> copyBlockEntityRenderData(Int2ReferenceMap<BlockEntity> blockEntities) {
+        Int2ReferenceOpenHashMap<Object> blockEntityRenderDataMap = null;
+
+        // Retrieve any render data after we have copied all block entities, as this will call into the code of
         // other mods. This could potentially result in the chunk being modified, which would cause problems if we
         // were iterating over any data in that chunk.
         // See https://github.com/CaffeineMC/sodium-fabric/issues/942 for more info.
-        for (var entry : Int2ReferenceMaps.fastIterable(this.blockEntities)) {
-            if (entry.getValue() instanceof RenderAttachmentBlockEntity holder) {
-                if (blockEntityAttachments == null) {
-                    blockEntityAttachments = new Int2ReferenceOpenHashMap<>();
+        for (var entry : Int2ReferenceMaps.fastIterable(blockEntities)) {
+            Object data = entry.getValue().getRenderData();
+
+            if (data != null) {
+                if (blockEntityRenderDataMap == null) {
+                    blockEntityRenderDataMap = new Int2ReferenceOpenHashMap<>();
                 }
 
-                blockEntityAttachments.put(entry.getIntKey(), holder.getRenderAttachmentData());
+                blockEntityRenderDataMap.put(entry.getIntKey(), data);
             }
         }
 
-        this.blockEntityAttachments = blockEntityAttachments != null ? blockEntityAttachments : Int2ReferenceMaps.emptyMap();
-    }
+        if (blockEntityRenderDataMap != null) {
+            blockEntityRenderDataMap.trim();
+        }
 
-    public RegistryEntry<Biome> getBiome(int x, int y, int z) {
-        return this.biomeData.get(x, y, z);
-    }
-
-    public BlockEntity getBlockEntity(int x, int y, int z) {
-        return this.blockEntities.get(packLocal(x, y, z));
-    }
-
-    public Object getBlockEntityRenderAttachment(int x, int y, int z) {
-        return this.blockEntityAttachments.get(packLocal(x, y, z));
-    }
-
-    public PackedIntegerArray getBlockData() {
-        return this.blockStateData;
-    }
-
-    public ClonedPalette<BlockState> getBlockPalette() {
-        return this.blockStatePalette;
+        return blockEntityRenderDataMap;
     }
 
     public ChunkSectionPos getPosition() {
         return this.pos;
     }
 
-    private static ClonedPalette<BlockState> copyPalette(PalettedContainer.Data<BlockState> container) {
-        Palette<BlockState> palette = container.palette();
-
-        if (palette instanceof IdListPalette) {
-            return new ClonedPaletteFallback<>(Block.STATE_IDS);
-        }
-
-        BlockState[] array = new BlockState[container.palette().getSize()];
-
-        for (int i = 0; i < array.length; i++) {
-            array[i] = palette.get(i);
-        }
-
-        return new ClonedPalleteArray<>(array);
+    public @Nullable ReadableContainer<BlockState> getBlockData() {
+        return this.blockData;
     }
 
-    private static PackedIntegerArray copyBlockData(PalettedContainer.Data<BlockState> container) {
-        var storage = container.storage();
-        var data = storage.getData();
-        var bits = container.configuration().bits();
-
-        if (bits == 0) {
-            // TODO: avoid this allocation
-            return new PackedIntegerArray(1, storage.getSize());
-        }
-
-        return new PackedIntegerArray(bits, storage.getSize(), data.clone());
+    public @Nullable ReadableContainer<RegistryEntry<Biome>> getBiomeData() {
+        return this.biomeData;
     }
 
-    /**
-     * @param x The local x-coordinate
-     * @param y The local y-coordinate
-     * @param z The local z-coordinate
-     * @return An index which can be used to key entities or blocks within a chunk
-     */
-    private static short packLocal(int x, int y, int z) {
-        return (short) (x << 8 | z << 4 | y);
+    public @Nullable Int2ReferenceMap<BlockEntity> getBlockEntityMap() {
+        return this.blockEntityMap;
     }
 
-    public int getLightLevel(LightType type, int x, int y, int z) {
-        var array = this.getLightArray(type);
+    public @Nullable Int2ReferenceMap<Object> getBlockEntityRenderDataMap() {
+        return this.blockEntityRenderDataMap;
+    }
 
-        // The sky-light array may not exist in certain dimensions.
-        if (array == null) {
-            return 0;
-        }
-
-        return array.get(x, y, z);
+    public @Nullable ChunkNibbleArray getLightArray(LightType lightType) {
+        return this.lightDataArrays[lightType.ordinal()];
     }
 
     public long getLastUsedTimestamp() {

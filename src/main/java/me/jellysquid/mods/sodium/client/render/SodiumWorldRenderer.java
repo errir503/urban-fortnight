@@ -182,6 +182,10 @@ public class SodiumWorldRenderer {
         this.lastCameraYaw = yaw;
         this.lastFogDistance = fogDistance;
 
+        profiler.swap("chunk_update");
+
+        this.renderSectionManager.updateChunks(updateChunksImmediately);
+
         profiler.swap("chunk_upload");
 
         this.renderSectionManager.uploadChunks();
@@ -189,12 +193,8 @@ public class SodiumWorldRenderer {
         if (this.renderSectionManager.needsUpdate()) {
             profiler.swap("chunk_render_lists");
 
-            this.renderSectionManager.updateRenderLists(camera, viewport, frame, spectator);
+            this.renderSectionManager.update(camera, viewport, frame, spectator);
         }
-
-        profiler.swap("chunk_update");
-
-        this.renderSectionManager.updateChunks(updateChunksImmediately);
 
         if (updateChunksImmediately) {
             profiler.swap("chunk_upload_immediately");
@@ -254,11 +254,11 @@ public class SodiumWorldRenderer {
         ChunkTracker.forEachChunk(tracker.getReadyChunks(), this.renderSectionManager::onChunkAdded);
     }
 
-    public void renderTileEntities(MatrixStack matrices,
-                                   BufferBuilderStorage bufferBuilders,
-                                   Long2ObjectMap<SortedSet<BlockBreakingInfo>> blockBreakingProgressions,
-                                   Camera camera,
-                                   float tickDelta) {
+    public void renderBlockEntities(MatrixStack matrices,
+                                    BufferBuilderStorage bufferBuilders,
+                                    Long2ObjectMap<SortedSet<BlockBreakingInfo>> blockBreakingProgressions,
+                                    Camera camera,
+                                    float tickDelta) {
         VertexConsumerProvider.Immediate immediate = bufferBuilders.getEntityVertexConsumers();
 
         Vec3d cameraPos = camera.getPos();
@@ -282,7 +282,7 @@ public class SodiumWorldRenderer {
                                      double z,
                                      BlockEntityRenderDispatcher blockEntityRenderer) {
         SortedRenderLists renderLists = this.renderSectionManager.getRenderLists();
-        Iterator<ChunkRenderList> renderListIterator = renderLists.sorted();
+        Iterator<ChunkRenderList> renderListIterator = renderLists.iterator();
 
         while (renderListIterator.hasNext()) {
             var renderList = renderListIterator.next();
@@ -295,16 +295,16 @@ public class SodiumWorldRenderer {
             }
 
             while (renderSectionIterator.hasNext()) {
-                var renderSectionId = renderSectionIterator.next();
+                var renderSectionId = renderSectionIterator.nextByteAsInt();
                 var renderSection = renderRegion.getSection(renderSectionId);
 
-                var renderData = renderSection.getInfo();
+                var blockEntities = renderSection.getCulledBlockEntities();
 
-                if (renderData == null) {
+                if (blockEntities == null) {
                     continue;
                 }
 
-                for (BlockEntity blockEntity : renderData.getBlockEntities()) {
+                for (BlockEntity blockEntity : blockEntities) {
                     renderBlockEntity(matrices, bufferBuilders, blockBreakingProgressions, tickDelta, immediate, x, y, z, blockEntityRenderer, blockEntity);
                 }
             }
@@ -321,13 +321,13 @@ public class SodiumWorldRenderer {
                                            double z,
                                            BlockEntityRenderDispatcher blockEntityRenderer) {
         for (var renderSection : this.renderSectionManager.getSectionsWithGlobalEntities()) {
-            var renderInfo = renderSection.getInfo();
+            var blockEntities = renderSection.getGlobalBlockEntities();
 
-            if (renderInfo == null) {
+            if (blockEntities == null) {
                 continue;
             }
 
-            for (var blockEntity : renderInfo.getGlobalBlockEntities()) {
+            for (var blockEntity : blockEntities) {
                 renderBlockEntity(matrices, bufferBuilders, blockBreakingProgressions, tickDelta, immediate, x, y, z, blockEntityRenderer, blockEntity);
             }
         }
@@ -371,6 +371,8 @@ public class SodiumWorldRenderer {
         matrices.pop();
     }
 
+    // the volume of a section multiplied by the number of sections to be checked at most
+    private static final double MAX_ENTITY_CHECK_VOLUME = 16 * 16 * 16 * 15;
 
     /**
      * Returns whether or not the entity intersects with any visible chunks in the graph.
@@ -387,6 +389,13 @@ public class SodiumWorldRenderer {
         }
 
         Box box = entity.getVisibilityBoundingBox();
+
+        // bail on very large entities to avoid checking many sections
+        double entityVolume = (box.maxX - box.minX) * (box.maxY - box.minY) * (box.maxZ - box.minZ);
+        if (entityVolume > MAX_ENTITY_CHECK_VOLUME) {
+            // TODO: do a frustum check instead, even large entities aren't visible if they're outside the frustum
+            return true;
+        }
 
         return this.isBoxVisible(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     }
