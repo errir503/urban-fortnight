@@ -28,6 +28,8 @@ public class MixinConfig {
         // You must manually add a rule for any new mixins not covered by an existing package rule.
         this.addMixinRule("core", true); // TODO: Don't actually allow the user to disable this
 
+        this.addMixinRule("debug.checks", false);
+
         this.addMixinRule("features", true);
 
         this.addMixinRule("features.gui", true);
